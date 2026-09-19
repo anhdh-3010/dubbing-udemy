@@ -110,19 +110,28 @@ interface Segment {
   status: 'pending' | 'translating' | 'ready' | 'failed'
 }
 
-interface SynthesisResult {
-  audio: ArrayBuffer     // WAV 24 kHz từ VieNeu
-  duration: number       // chính xác, biết trước khi phát
+/** Một câu đã chuẩn bị xong nhưng chưa phát. */
+interface Utterance {
+  /** Số giây câu này chiếm ở tốc độ 1.0. Chính xác hay ước lượng
+   *  thì xem knowsDurationAhead. */
+  readonly duration: number
+  /** Resolve khi đọc xong. Reject bằng AbortError nếu bị huỷ. */
+  play(rate: number): Promise<void>
+  cancel(): void
 }
 
 interface TTSProvider {
+  readonly name: string
+  /** false với engine chỉ ước lượng được thời lượng, như Web Speech. */
   readonly knowsDurationAhead: boolean
   isAvailable(): Promise<boolean>
-  synthesize(text: string, signal: AbortSignal): Promise<SynthesisResult>
+  prepare(text: string, signal: AbortSignal): Promise<Utterance>
 }
 ```
 
 Mỗi segment chỉ có **một** bản dịch duy nhất, dùng chung cho phụ đề và giọng đọc. Mục 7 giải thích vì sao không cần tách làm hai.
+
+`Utterance` tách việc *chuẩn bị* khỏi việc *phát* vì hai loại engine hoạt động khác nhau: Web Speech đọc thẳng và chỉ ước lượng được độ dài, còn VieNeu trả về audio nên biết chính xác từng mili giây. Scheduler chỉ cần `duration` trước khi quyết định co giãn, không cần biết bên dưới là loại nào.
 
 ## 6. Đồng bộ
 
