@@ -75,4 +75,12 @@ describe('isCaptionUrlAllowed', () => {
     expect(isCaptionUrlAllowed('./sample.vtt')).toBe(false)
     expect(isCaptionUrlAllowed('')).toBe(false)
   })
+
+  it('từ chối đường dẫn không phải .vtt trên host hợp lệ', () => {
+    expect(isCaptionUrlAllowed('https://mobile.udemy.com/api-2.0/users/me/?x=.vtt')).toBe(false)
+  })
+
+  it('vẫn nhận URL phụ đề thật có query string', () => {
+    expect(isCaptionUrlAllowed('https://x.udemycdn.com/c/en.vtt?token=abc')).toBe(true)
+  })
 })

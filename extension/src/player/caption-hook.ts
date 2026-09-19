@@ -39,13 +39,14 @@ const CAPTION_HOSTS = /(^|\.)udemy\.com$|(^|\.)udemycdn\.com$/i
 
 /**
  * The service worker fetches reported URLs with the user's cookies, so a
- * forged report must not become a credentialed request to an arbitrary host.
- * Both the reporter and the fetcher check this.
+ * forged report must not become a credentialed request to an arbitrary host
+ * — or to an arbitrary path on an allowed host. Both the reporter and the
+ * fetcher check this.
  */
 export function isCaptionUrlAllowed(raw: string): boolean {
   try {
     const url = new URL(raw)
-    return url.protocol === 'https:' && CAPTION_HOSTS.test(url.hostname)
+    return url.protocol === 'https:' && CAPTION_HOSTS.test(url.hostname) && VTT_URL.test(url.pathname)
   } catch {
     return false
   }
