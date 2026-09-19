@@ -42,13 +42,19 @@ export class FakeTTS implements TTSProvider {
   readonly prepared: FakeUtterance[] = []
 
   /** Seconds of speech to report for any text. */
-  constructor(private durationFor: (text: string) => number = () => 1) {}
+  constructor(
+    private durationFor: (text: string) => number = () => 1,
+    private prepareDelayMs = 0,
+  ) {}
 
   async isAvailable(): Promise<boolean> {
     return true
   }
 
   async prepare(text: string): Promise<Utterance> {
+    if (this.prepareDelayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, this.prepareDelayMs))
+    }
     const u = new FakeUtterance(this.durationFor(text))
     this.prepared.push(u)
     return u

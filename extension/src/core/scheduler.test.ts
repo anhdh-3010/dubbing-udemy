@@ -124,4 +124,58 @@ describe('Scheduler', () => {
     await scheduler.tick()
     expect(tts.last?.played).toBe(true)
   })
+
+  it('tính ngân sách từ lúc thực sự bắt đầu đọc, không từ start của segment', async () => {
+    const { video, tts, scheduler } = setup(() => 5)
+    video.currentTime = 2.0 // trễ 1 giây so với start = 1
+    await scheduler.tick()
+    // Còn 3 giây segment + 1 giây lặng = 4 giây thực, nên 5 giây đọc phải
+    // nhanh lên 1.25 lần. Nếu tính từ start = 1 thì ngân sách thành 5 giây và
+    // tốc độ bị kẹp về 1.0.
+    expect(tts.last?.rateUsed).toBeCloseTo(1.25)
+  })
+
+  it('không bắt đầu câu thứ hai khi câu đầu còn đang chuẩn bị', async () => {
+    const video = new FakeVideo()
+    const tts = new FakeTTS(() => 2, 20)
+    const scheduler = new Scheduler({ video, provider: tts, duckVolume: 0.1 })
+    scheduler.setSegments(segs())
+    video.currentTime = 1.0
+    const first = scheduler.tick()
+    video.currentTime = 6.0 // đã sang segment sau
+    await scheduler.tick()
+    await first
+    expect(tts.prepared).toHaveLength(1)
+    expect(video.volume).toBeCloseTo(0.1)
+  })
+
+  it('tua trong lúc đang chuẩn bị thì bỏ câu đó', async () => {
+    const video = new FakeVideo()
+    const tts = new FakeTTS(() => 2, 20)
+    const scheduler = new Scheduler({ video, provider: tts, duckVolume: 0.1 })
+    scheduler.setSegments(segs())
+    video.currentTime = 1.0
+    const pending = scheduler.tick()
+    scheduler.onSeek()
+    await pending
+    expect(tts.last?.played).toBe(false)
+    expect(tts.last?.cancelled).toBe(true)
+    expect(video.volume).toBeCloseTo(1)
+  })
+
+  it('nhận ra tốc độ do chính nó ghi', async () => {
+    const { video, scheduler } = setup(() => 20)
+    video.currentTime = 1.0
+    await scheduler.tick()
+    expect(scheduler.isOwnRate(video.playbackRate)).toBe(true)
+    expect(scheduler.isOwnRate(1.25)).toBe(false)
+  })
+
+  it('stop rồi thì tick không bắt đầu câu mới nữa', async () => {
+    const { video, tts, scheduler } = setup()
+    scheduler.stop()
+    video.currentTime = 1.0
+    await scheduler.tick()
+    expect(tts.prepared).toHaveLength(0)
+  })
 })
