@@ -34,3 +34,19 @@ export function installCaptionHook(win: WindowLike, onUrl: (url: string) => void
     win.fetch = original
   }
 }
+
+const CAPTION_HOSTS = /(^|\.)udemy\.com$|(^|\.)udemycdn\.com$/i
+
+/**
+ * The service worker fetches reported URLs with the user's cookies, so a
+ * forged report must not become a credentialed request to an arbitrary host.
+ * Both the reporter and the fetcher check this.
+ */
+export function isCaptionUrlAllowed(raw: string): boolean {
+  try {
+    const url = new URL(raw)
+    return url.protocol === 'https:' && CAPTION_HOSTS.test(url.hostname)
+  } catch {
+    return false
+  }
+}

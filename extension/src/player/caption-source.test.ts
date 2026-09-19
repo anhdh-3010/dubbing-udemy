@@ -37,7 +37,7 @@ describe('cuesFromTextTracks', () => {
   })
 
   it('trả mảng rỗng khi video không có track', () => {
-    expect(cuesFromTextTracks(videoWithTracks())).toEqual([])
+    expect(cuesFromTextTracks(document.createElement('video'))).toEqual([])
   })
 
   it('bỏ qua track không phải captions/subtitles', () => {

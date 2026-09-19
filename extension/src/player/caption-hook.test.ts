@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { installCaptionHook, type WindowLike } from './caption-hook'
+import { installCaptionHook, isCaptionUrlAllowed, type WindowLike } from './caption-hook'
 
 function fakeWindow(): WindowLike {
   return { fetch: vi.fn(async () => new Response('ok')) } as unknown as WindowLike
@@ -50,5 +50,29 @@ describe('installCaptionHook', () => {
     const win = { fetch: vi.fn(async () => { throw new Error('offline') }) } as unknown as WindowLike
     installCaptionHook(win, () => {})
     await expect(win.fetch('https://x.udemycdn.com/c/en.vtt')).rejects.toThrow('offline')
+  })
+})
+
+describe('isCaptionUrlAllowed', () => {
+  it('nhận URL phụ đề của Udemy và CDN của nó', () => {
+    expect(isCaptionUrlAllowed('https://x.udemycdn.com/c/en.vtt')).toBe(true)
+    expect(isCaptionUrlAllowed('https://www.udemy.com/c/en.vtt')).toBe(true)
+  })
+
+  it('từ chối host lạ, kể cả khi tên miền chỉ là hậu tố', () => {
+    expect(isCaptionUrlAllowed('https://evil.com/en.vtt')).toBe(false)
+    expect(isCaptionUrlAllowed('https://notudemy.com/en.vtt')).toBe(false)
+    expect(isCaptionUrlAllowed('https://udemy.com.evil.com/en.vtt')).toBe(false)
+  })
+
+  it('từ chối localhost và giao thức không phải https', () => {
+    expect(isCaptionUrlAllowed('http://127.0.0.1:8000/en.vtt')).toBe(false)
+    expect(isCaptionUrlAllowed('http://www.udemy.com/en.vtt')).toBe(false)
+    expect(isCaptionUrlAllowed('file:///etc/passwd')).toBe(false)
+  })
+
+  it('từ chối chuỗi không phải URL tuyệt đối', () => {
+    expect(isCaptionUrlAllowed('./sample.vtt')).toBe(false)
+    expect(isCaptionUrlAllowed('')).toBe(false)
   })
 })
