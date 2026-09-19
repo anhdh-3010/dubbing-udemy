@@ -26,7 +26,7 @@ Khi mở bài giảng, extension lấy file phụ đề, gộp các cue thành c
 | Giọng đọc | VieNeu v3 Nano, giọng **Minh Quân**, qua server HTTP cục bộ | Chất lượng tiếng Việt cao nhất mà vẫn miễn phí và chạy offline trên máy này; 11 giọng dựng sẵn; API tương thích OpenAI |
 | Số bước tổng hợp | **8 bước** | Nghe hay hơn 16 bước khi đánh giá bằng tai, và tốn đúng một nửa CPU |
 | Giọng dự phòng | Web Speech API (`Linh`) | Giữ extension dùng được khi server cục bộ không chạy |
-| Đóng gói server | **Docker** (`server/`) | Quyết định của chủ dự án. Đã dựng và đo; cái giá là chậm hơn native 3.3 lần, xem mục 8.1 |
+| Đóng gói server | **Docker** (`server/`) | Quyết định của chủ dự án. Đã dựng và đo; cái giá là chậm hơn native 2.7 lần, xem mục 8.1 |
 | Chiến lược đồng bộ | Co giãn thích ứng; không bao giờ dừng video | Dừng video làm bài giảng giật cục và kéo dài thời lượng |
 | Chiến lược chia lô | Dịch cả bài ở nền, lô đang xem trước | Độ trễ của streaming nhưng vẫn giữ chất lượng và khả năng cache của dịch trọn file |
 | Phụ đề | Hiển thị phụ đề tiếng Việt | Gần như miễn phí khi đã có bản dịch; giúp người xem đối chiếu khi giọng đọc khó nghe |
@@ -209,16 +209,21 @@ Danh sách từ cần giữ nguyên nằm trong prompt chứ không phải một
 
 Container chỉ publish cổng ra `127.0.0.1:8770` chứ không ra mọi interface — đã kiểm chứng là không với tới được qua IP LAN của máy. Model không nằm trong image; thư mục cache HuggingFace của host được mount vào `/models`, nên image 1.45GB không phải cõng thêm 269MB trọng số và cũng không tải lại lần nữa.
 
-**Số đo thật, không phải ước tính.** Bản thiết kế trước viết rằng Colima "không bị phạt nặng" vì là VM arm64 không giả lập kiến trúc. **Điều đó sai.** Đo trên cùng một đoạn 17.2 giây audio, cùng model Nano 8 bước:
+**Số đo thật, không phải ước tính.** Bản thiết kế trước viết rằng Colima "không bị phạt nặng" vì là VM arm64 không giả lập kiến trúc. **Điều đó sai.** Đo trên cùng một đoạn 17.2 giây audio, cùng model Nano 8 bước, và — quan trọng — qua **đúng cùng một file `app.py`** để không lẫn tạp chất:
 
-| Môi trường | Thời gian suy luận | RTF | CPU cho 1 giờ bài giảng |
-|---|---|---|---|
-| Native, 2 luồng | 1.47s | **0.086** | ~5,2 phút |
-| Docker qua Colima, VM 2 CPU | 4.89s | **0.284** | ~17 phút |
+| Môi trường | Suy luận | RTF | Nạp nguội | RAM | CPU cho 1 giờ bài giảng |
+|---|---|---|---|---|---|
+| Native, thư viện trực tiếp, ép 2 luồng | 1.47s | 0.086 | — | — | ~5,2 phút |
+| Native, qua `app.py` + HTTP | **1.79s** | **0.105** | 4.34s | 478 MB | ~6,3 phút |
+| Docker qua Colima, VM 2 CPU | **4.89s** | **0.284** | 7.72s | 639 MB | ~17 phút |
 
-**Chậm hơn 3.3 lần.** Và số CPU không phải nguyên nhân: bản native bị giới hạn xuống đúng 2 luồng vẫn cho 0.086, tức tác vụ này gần như không hưởng lợi từ việc có thêm nhân. Nguyên nhân nhiều khả năng nằm ở chỗ khác — bản ONNX Runtime cho Linux arm64 trong container không với tới được các kernel tăng tốc của Apple mà bản macOS dùng được. Đây là giả thuyết hợp lý chứ chưa xác minh.
+**Container chậm hơn 2.7 lần** so với cặp đối chiếu đúng của nó (dòng giữa). Con số phải so là 1.79 với 4.89; so với dòng đầu sẽ ra 3.3 lần nhưng đó là so lệch cặp.
 
-**Hệ quả chấp nhận được.** RTF 0.284 vẫn thấp hơn 1.0 rất nhiều, nên cơ chế lookahead vẫn bám kịp video thoải mái. Cái giá thật là điện năng: TTS tốn gấp ba lần thời gian CPU, đáng để ý khi máy chạy pin. Nếu sau này thấy phiền thì chuyển sang native chỉ là đổi cách chạy cùng một `app.py`, extension không phải sửa gì.
+Số CPU không phải nguyên nhân: bản native ép xuống đúng 2 luồng còn *nhanh hơn* bản để mặc định. Nguyên nhân nhiều khả năng nằm ở chỗ khác — bản ONNX Runtime cho Linux arm64 trong container không với tới được các kernel tăng tốc của Apple mà bản macOS dùng được. Đây là giả thuyết hợp lý chứ chưa xác minh.
+
+**Một chỉnh tinh miễn phí:** ép số luồng ONNX xuống 2 nhanh hơn để mặc định khoảng 18% (1.47s so với 1.79s). Tác vụ này bị phạt vì tranh chấp luồng chứ không hưởng lợi từ nhiều nhân. Nên đặt `OMP_NUM_THREADS=2` cho cả hai cách chạy.
+
+**Hệ quả chấp nhận được.** RTF 0.284 vẫn thấp hơn 1.0 rất nhiều, nên cơ chế lookahead vẫn bám kịp video thoải mái. Cái giá thật là điện năng: TTS tốn gần gấp ba lần thời gian CPU, đáng để ý khi máy chạy pin. Đổi sang native chỉ là chạy cùng `app.py` theo cách khác, extension không phải sửa gì.
 
 **Đã kiểm chứng khi dựng:**
 - `/health` trả về `model_loaded: false` trước request đầu tiên — nạp lười hoạt động đúng thiết kế.
