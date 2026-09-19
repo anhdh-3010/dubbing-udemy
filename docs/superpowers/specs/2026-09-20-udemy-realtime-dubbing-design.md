@@ -14,24 +14,25 @@ Khóa học Udemy dạy bằng tiếng Anh. Đọc phụ đề thì tranh mất 
 
 Udemy có sẵn file phụ đề kèm timestamp cho hầu hết bài giảng, và toàn bộ file đã nằm sẵn trước khi video chạy tới bất kỳ câu nào. Đúng một sự thật đó định hình toàn bộ thiết kế: extension có thể dịch và tổng hợp giọng **trước con trỏ phát**, thay vì chạy theo âm thanh. Không cần nhận dạng giọng nói, không cần ASR streaming, không phải gồng với ngân sách độ trễ từng giây.
 
-Khi mở bài giảng, extension đọc các cue phụ đề, gộp chúng thành câu hoàn chỉnh, dịch theo lô — ưu tiên lô chứa vị trí đang phát để tiếng nói bắt đầu trong vài giây — rồi tổng hợp giọng chạy trước con trỏ phát một quãng. Âm thanh gốc được hạ nhỏ chứ không tắt hẳn. Video không bao giờ bị dừng.
+Khi mở bài giảng, extension lấy file phụ đề, gộp các cue thành câu hoàn chỉnh, dịch theo lô — ưu tiên lô chứa vị trí đang phát để tiếng nói bắt đầu trong vài giây — rồi tổng hợp giọng chạy trước con trỏ phát một quãng. Âm thanh gốc được hạ nhỏ chứ không tắt hẳn. Video không bao giờ bị dừng.
 
 ## 3. Các quyết định đã chốt
 
 | Quyết định | Lựa chọn | Lý do |
 |---|---|---|
-| Nguồn văn bản | Track phụ đề của chính Udemy (`video.textTracks`) | Timestamp chính xác, biết trước toàn bộ nội dung, không tốn chi phí và độ trễ của ASR |
+| Nguồn văn bản | Bắt request `.vtt` mà Udemy gọi; `video.textTracks` làm dự phòng | Cho trọn vẹn transcript ngay lập tức, không phụ thuộc người dùng có bật phụ đề hay không |
 | Dịch | LLM API, người dùng tự cấp key (Gemini free tier) | Ngữ cảnh toàn bài thắng hẳn dịch máy từng câu với nội dung kỹ thuật; hạn mức miễn phí đủ cho một người |
+| Thuật ngữ IT | **Giữ nguyên tiếng Anh** trong bản dịch | Người học vốn đọc tài liệu bằng tiếng Anh; dịch thuật ngữ sang tiếng Việt làm câu khó hiểu hơn chứ không dễ hơn |
 | Giọng đọc | VieNeu v3 Nano, giọng **Minh Quân**, qua server HTTP cục bộ | Chất lượng tiếng Việt cao nhất mà vẫn miễn phí và chạy offline trên máy này; 11 giọng dựng sẵn; API tương thích OpenAI |
 | Giọng dự phòng | Web Speech API (`Linh`) | Giữ extension dùng được khi server cục bộ không chạy |
+| Đóng gói server | Native + `launchd` mặc định; kèm `Dockerfile` để tái lập | Xem mục 8.1 |
 | Chiến lược đồng bộ | Co giãn thích ứng; không bao giờ dừng video | Dừng video làm bài giảng giật cục và kéo dài thời lượng |
 | Chiến lược chia lô | Dịch cả bài ở nền, lô đang xem trước | Độ trễ của streaming nhưng vẫn giữ chất lượng và khả năng cache của dịch trọn file |
 | Phụ đề | Hiển thị phụ đề tiếng Việt | Gần như miễn phí khi đã có bản dịch; giúp người xem đối chiếu khi giọng đọc khó nghe |
-| Giao diện glossary | Hoãn sang v2 | Giữ thuật ngữ kỹ thuật bằng tiếng Anh chỉ là một dòng trong prompt, không cần giao diện |
 
 ### Nằm ngoài phạm vi v1
 
-Đóng gói lên Chrome Web Store, luồng onboarding, privacy policy, hỗ trợ đa trình duyệt, các nhà cung cấp TTS đám mây, giao diện quản lý glossary, nhân bản giọng.
+Đóng gói lên Chrome Web Store, luồng onboarding, privacy policy, hỗ trợ đa trình duyệt, các nhà cung cấp TTS đám mây, giao diện quản lý glossary, nhân bản giọng, provider chạy WASM (xem mục 8.2).
 
 ## 4. Kiến trúc
 
@@ -41,7 +42,7 @@ Ba tiến trình, chia theo việc mỗi bên được phép làm:
 
 **Content script** (chạy trong trang Udemy) nắm mọi thứ nhạy cảm về thời gian: phần tử `<video>`, vòng lặp scheduler, việc phát âm thanh, lớp phụ đề và bảng điều khiển. Toàn bộ logic thời gian nằm ở đây, trong một chỗ duy nhất.
 
-**Service worker** nắm truy cập mạng và bí mật: khóa LLM API, các lời gọi dịch, và request tới server TTS cục bộ. Nó cố tình không giữ trạng thái phát, vì MV3 có thể chấm dứt nó bất cứ lúc nào mà không báo trước.
+**Service worker** nắm truy cập mạng và bí mật: khóa LLM API, các lời gọi dịch, tải file phụ đề, và request tới server TTS cục bộ. Nó cố tình không giữ trạng thái phát, vì MV3 có thể chấm dứt nó bất cứ lúc nào mà không báo trước.
 
 **Server TTS cục bộ** (`vieneu`, chạy ngoài trình duyệt) nắm việc tổng hợp giọng. Extension nói chuyện với nó qua `http://127.0.0.1:<port>/v1/audio/speech`.
 
@@ -56,9 +57,9 @@ Udemy phục vụ qua HTTPS, nên một request HTTP trần lẽ ra bị chặn 
 | Module | Nhiệm vụ | Phụ thuộc |
 |---|---|---|
 | `player-bridge` | Bám vào `<video>` của Udemy; phát sự kiện play/pause/seek/ratechange; phát hiện đổi bài (Udemy là SPA, không có page reload) | DOM |
-| `caption-source` | Tạo ra `Cue[]`. Chính: đọc `video.textTracks` ở chế độ `hidden`. Dự phòng: lấy URL `.vtt` từ API lecture của Udemy | `player-bridge` |
+| `caption-source` | Tạo ra `Cue[]` từ file `.vtt` của Udemy. Chi tiết ở mục 4.5 | `player-bridge` |
 | `segmenter` | Gộp các cue vụn (Udemy cắt ở mức 3–6 chữ) thành câu hoàn chỉnh, giới hạn bởi dấu câu, khoảng lặng, và trần 12 giây | thuần túy |
-| `translator` | Chia lô ~40 segment mỗi lời gọi LLM; sinh đồng thời `displayText` và `speechText`; kiểm tra và khớp kết quả theo id | `cache` |
+| `translator` | Chia lô ~40 segment mỗi lời gọi LLM; giữ nguyên thuật ngữ IT; kiểm tra và khớp kết quả theo id | `cache` |
 | `tts-provider` | Interface `TTSProvider`. `VieNeuProvider` (chính), `WebSpeechProvider` (dự phòng) | — |
 | `scheduler` | Vòng lặp lõi: đọc `currentTime` mỗi frame, quyết định đọc câu nào, tính tốc độ, điều khiển ducking và `playbackRate` | tất cả phần trên |
 | `cache` | IndexedDB: bản dịch theo bài học, audio đã tổng hợp, dọn theo LRU | — |
@@ -69,12 +70,25 @@ Udemy phục vụ qua HTTPS, nên một request HTTP trần lẽ ra bị chặn 
 ```
 đổi bài (SPA)
   → player-bridge phát { videoEl, lectureId }
-  → caption-source trả về Cue[]
+  → caption-source bắt được URL .vtt → service worker tải → parse thành Cue[]
   → segmenter gộp thành Segment[]
   → service worker chia lô, ƯU TIÊN lô chứa currentTime
   → LLM dịch → content script nhận → cache ghi xuống
   → scheduler bắt đầu đọc; các lô còn lại về dần ở nền
 ```
+
+### 4.5 Lấy phụ đề
+
+Udemy luôn gọi một API trả về file `.vtt` khi nạp bài giảng. Bắt request đó là cách lấy transcript đáng tin cậy nhất: nó cho trọn vẹn nội dung ngay lập tức và không phụ thuộc vào việc người dùng có bật phụ đề trên player hay không.
+
+Ràng buộc của MV3 phải tính tới: `chrome.webRequest` **không đọc được response body**, và bản blocking đã bị gỡ khỏi MV3. Nên cơ chế gồm hai bước:
+
+1. Một script chạy ở **MAIN world** vá `fetch` và `XMLHttpRequest` để ghi lại URL của file `.vtt` — cùng với JSON liệt kê các track phụ đề — khi trang gọi tới.
+2. Service worker tự `fetch` URL đó kèm credentials rồi parse nội dung VTT.
+
+**Đường dự phòng:** đọc `video.textTracks` ở chế độ `hidden`. Dùng khi việc bắt request không thành — ví dụ phụ đề đã nằm trong cache của trang nên không có request nào phát ra để mà bắt.
+
+Cần xác nhận ở M1: dạng chính xác của endpoint và tên trường chứa URL caption.
 
 ## 5. Mô hình dữ liệu
 
@@ -90,8 +104,7 @@ interface Segment {
   start: number          // giây, theo timeline của phụ đề gốc
   end: number
   srcText: string        // tiếng Anh gốc
-  displayText?: string   // tiếng Việt, dùng cho lớp phụ đề
-  speechText?: string    // tiếng Việt, thuật ngữ đã phiên âm, dùng cho TTS
+  viText?: string        // bản dịch, dùng cho cả phụ đề lẫn giọng đọc
   status: 'pending' | 'translating' | 'ready' | 'failed'
 }
 
@@ -107,7 +120,7 @@ interface TTSProvider {
 }
 ```
 
-`displayText` và `speechText` là hai cách thể hiện của cùng một câu, được sinh ra trong cùng một lời gọi LLM. Mục 7 giải thích vì sao chúng khác nhau.
+Mỗi segment chỉ có **một** bản dịch duy nhất, dùng chung cho phụ đề và giọng đọc. Mục 7 giải thích vì sao không cần tách làm hai.
 
 ## 6. Đồng bộ
 
@@ -153,21 +166,27 @@ Khi bắt đầu đọc, `video.volume` giảm dần xuống mức cấu hình (
 | Người dùng đổi tốc độ | Ghi nhận làm `baseline` mới; tính lại từ đó |
 | Đổi bài | Tháo dỡ hoàn toàn rồi dựng lại |
 
-## 7. Phiên âm thuật ngữ
+## 7. Xử lý thuật ngữ IT
 
-Một model TTS chỉ biết tiếng Việt thì chưa bao giờ thấy bộ âm tiếng Anh trong lúc huấn luyện. Đưa cho nó "React component" sẽ sinh ra tạp âm. Nhưng mục tiêu vốn đã sai ngay từ đầu: người Việt dạy lập trình không phát âm "component" bằng giọng Anh-Mỹ giữa câu — họ nói "com-pô-nen".
+Bản dịch **giữ nguyên thuật ngữ IT bằng tiếng Anh**. Prompt yêu cầu dịch phần văn xuôi sang tiếng Việt tự nhiên, nhưng không đụng vào tên công nghệ, tên thư viện, từ khóa ngôn ngữ, và những thuật ngữ mà lập trình viên Việt vốn dùng nguyên gốc.
 
-Vì vậy translator sinh ra hai cách thể hiện cho mỗi segment. `displayText` giữ nguyên "React component" vì đó là thứ người ta muốn *nhìn thấy*. `speechText` mang dạng đã phiên âm vì đó là thứ nghe đúng khi *đọc lên*. Một lời gọi LLM sinh ra cả hai, nên việc này không tốn thêm request nào.
+Chuẩn mực để đối chiếu:
 
-**Ràng buộc:** bản phiên âm phải dùng chính tả hợp lệ của tiếng Việt. Đo được trong lúc thiết kế: "prốp" thất bại vì tiếng Việt không có cụm phụ âm `pr` — bộ phonemizer rơi về tiếng Anh, và có một lần đánh vần từng chữ cái. "pờ-rốp" thì sạch.
+| | |
+|---|---|
+| Gốc | "today we implement a project react with backend fastapi" |
+| **Đúng** | "hôm nay chúng ta sẽ triển khai một project React với backend là FastAPI" |
+| Sai | "hôm nay chúng ta sẽ hiện thực một dự án phản ứng với hậu trường nhanh api" |
 
-**Kiểm tra tự động:** chạy `speechText` qua `espeak-ng -v vi -q --ipa` rồi tìm dấu chuyển ngôn ngữ `(en)` sẽ phát hiện được bản phiên âm sai mà không cần ai nghe. Đây được dùng như một bộ linter độc lập — VieNeu dùng phonemizer `sea-g2p` riêng của nó, nên phép kiểm tra này xác nhận *văn bản*, không phải nội tình của VieNeu.
+Quy tắc này áp dụng cho cả phụ đề lẫn giọng đọc, nên mỗi segment chỉ cần **một** bản dịch — không tách `displayText` và `speechText`, và không có bước phiên âm nào.
 
-Tính năng này là một tùy chọn, mặc định bật. Xem câu hỏi còn treo số 1.
+Hệ quả kỹ thuật: VieNeu Nano sẽ đọc các từ tiếng Anh với chất giọng Việt. Tài liệu của VieNeu gọi đó là điểm yếu của bản Nano, nhưng nó lại trùng khớp với cách người Việt dạy lập trình thực sự phát âm — không ai nói "component" bằng giọng Anh-Mỹ giữa câu tiếng Việt. Ở đây điểm yếu công bố và nhu cầu thực tế đi cùng một hướng.
+
+Danh sách từ cần giữ nguyên nằm trong prompt chứ không phải một file cấu hình riêng. Chỉ khi nào phát hiện LLM dịch nhầm một nhóm từ cụ thể và lặp lại thì mới cân nhắc làm glossary (v2).
 
 ## 8. Server TTS cục bộ
 
-**Runtime:** `vieneu` (đã xác nhận v3.8.1), đường ONNX, không cần PyTorch. Model `VieNeu-TTS-v3-Nano`, ~282MB, 24 kHz, giọng `Minh Quân`.
+**Runtime:** `vieneu` (đã xác nhận v3.8.1), đường ONNX, không cần PyTorch. Model `VieNeu-TTS-v3-Nano`, 269MB trọng số, 24 kHz, giọng `Minh Quân`.
 
 **Endpoint:** `POST http://127.0.0.1:<port>/v1/audio/speech`, tương thích OpenAI. Có một hệ quả đáng nói: **một implementation `TTSProvider` duy nhất** phục vụ được cả server này lẫn API của OpenAI, nếu sau này muốn dùng đám mây. Chỉ khác base URL.
 
@@ -175,11 +194,28 @@ Tính năng này là một tùy chọn, mặc định bật. Xem câu hỏi còn
 - Server đặt header `Access-Control-Allow-Origin: chrome-extension://<id của extension>`.
 - Extension khai báo `host_permissions: ["http://127.0.0.1/*"]` (match pattern bỏ qua port, nên khai báo này phủ mọi port).
 - Request được phát đi từ service worker chứ không phải content script, để chúng chạy trên origin của extension và không chịu ràng buộc CSP của trang.
-- Một `launchd` user agent giữ cho server chạy qua mỗi lần khởi động máy.
 
 **Khả dụng:** scheduler dò server khi bắt đầu bài giảng và mỗi khi có lỗi. Khi không liên lạc được, extension rơi về `WebSpeechProvider` và **báo rõ trong bảng điều khiển** thay vì im lặng.
 
-**Ghi chú về lượng tử hóa:** bản int8 của VieNeu nhanh hơn ~1.6 lần nhưng đòi AVX-512 VNNI / AVX-VNNI — các tập lệnh x86 mà Apple Silicon không có, và tài liệu cảnh báo sẽ cho ra audio méo nếu thiếu. Trên máy này chỉ đường fp32 dùng được. Thay vào đó, tham số `steps` là núm điều chỉnh (xem câu hỏi còn treo số 2).
+**Ghi chú về lượng tử hóa:** bản int8 của VieNeu nhanh hơn ~1.6 lần nhưng đòi AVX-512 VNNI / AVX-VNNI — các tập lệnh x86 mà Apple Silicon không có, và tài liệu cảnh báo sẽ cho ra audio méo nếu thiếu. Trên máy này chỉ đường fp32 dùng được. Thay vào đó, tham số `steps` là núm điều chỉnh.
+
+### 8.1 Đóng gói
+
+Hai cách, cùng một interface HTTP nên đổi qua lại không ảnh hưởng gì tới extension.
+
+**Native + `launchd` — mặc định.** Một venv Python và một file plist trong `~/Library/LaunchAgents`. Chạy thẳng trên CPU, không có tầng ảo hóa nào ở giữa, khởi động cùng máy.
+
+**Docker — tùy chọn, dành cho tái lập.** Máy này đã có Docker CLI 28.5.2 và Colima 0.9.1, nhưng daemon chưa chạy. Colima dựng một VM Linux arm64 nên không có giả lập kiến trúc và phần tính toán không bị phạt nặng, nhưng vẫn mất một phần hiệu năng cho tầng ảo hóa và tốn RAM cố định cấp cho VM. Đổi lại được môi trường tái lập, gỡ sạch dễ, và chuyển sang máy khác không phải dựng lại từ đầu.
+
+Quyết định: **M2 làm native**, kèm `Dockerfile` và `docker-compose.yml` trong repo cho ai cần. Với một server chạy loopback phục vụ đúng một người trên đúng máy này, tính tái lập của Docker chưa đổi được cho cái giá của nó. Mức phạt hiệu năng cụ thể của Colima đo được nếu cần — xem câu hỏi còn treo số 3.
+
+### 8.2 WASM — vì sao không dùng cho VieNeu
+
+VieNeu Nano gồm ba đồ thị ONNX tổng cộng 269MB (`vector_estimator` 148MB, `codec_decoder` 95MB, `text_encoder` 25MB), cộng phonemizer `sea-g2p` hiện chưa có bản chạy trong trình duyệt. Quan trọng hơn, kiến trúc flow-matching chạy 8–16 lượt suy luận cho mỗi câu, nên mức phạt hiệu năng của WASM bị nhân lên đúng ngần ấy lần. Không khả thi.
+
+Con đường WASM thực tế là quay về model định dạng Piper — cụ thể `CSA v3` (74MB, RTF 0.061 đo trong lúc thiết kế). Nó thấp hơn VieNeu một bậc về chất lượng nhưng nằm gọn trong extension và không cần server nào cả.
+
+Vì `TTSProvider` vốn đã là một interface, thêm `WasmProvider` sau này không phải đụng vào phần lõi. Đề xuất: **để dành cho v2**, và khi làm thì cho nó thay chỗ `WebSpeechProvider` trong chuỗi dự phòng — thành VieNeu → CSA v3 (WASM) → Web Speech. Không đưa vào v1 vì nó thêm 74MB cùng một đường mã nữa phải bảo trì, trong khi dự phòng chỉ dùng tới lúc server chết.
 
 ## 9. Cache
 
@@ -196,6 +232,7 @@ Nguyên tắc chi phối: hỏng cái gì thì lùi về xem video như bình th
 | Sự cố | Hành vi |
 |---|---|
 | Bài giảng không có phụ đề | Báo trong bảng điều khiển, tắt lồng tiếng, để video yên |
+| Không bắt được request `.vtt` | Lùi sang đọc `video.textTracks`; vẫn không có thì coi như không có phụ đề |
 | Key sai hoặc hết hạn mức | Thông báo rõ kèm lối tới trang options; **ngừng gọi API** thay vì thử lại vô hạn |
 | Một lô dịch thất bại | Thử lại hai lần có backoff; sau đó các segment ấy **phát âm thanh gốc ở âm lượng đầy** |
 | LLM trả về id sai hoặc thiếu | Chỉ nhận các id khớp; đưa phần còn lại vào hàng đợi lại. Chuyện này xảy ra thật khi dịch theo lô và bắt buộc phải kiểm tra |
@@ -208,29 +245,29 @@ Nguyên tắc chi phối: hỏng cái gì thì lùi về xem video như bình th
 
 Bộ máy đồng bộ là nơi bug sẽ trú ngụ, và gần như toàn bộ nó kiểm thử được mà không cần trình duyệt.
 
-**Unit (Vitest), các hàm thuần:** gộp cue, tính tốc độ, chia lô, tra cứu index segment, kiểm tra phản hồi LLM, linter phiên âm.
+**Unit (Vitest), các hàm thuần:** gộp cue, parse VTT, tính tốc độ, chia lô, tra cứu index segment, kiểm tra phản hồi LLM.
 
 **Scheduler (Vitest + provider giả):** `FakeTranslator` trả về văn bản có độ dài điều khiển được; `FakeTTS` báo thời lượng tùy ý; một đồng hồ ảo điều khiển phần tử video giả. Cách này phủ được những ca khó — câu dịch dài gấp đôi khung thời gian, tua giữa câu, đổi tốc độ đang khi đọc — mà không cần Udemy và không cần phần cứng âm thanh.
 
-**End-to-end (Playwright):** một trang fixture cục bộ có `<video>` và track VTT dựng giống Udemy, nạp extension thật. Chạy được trong CI, không cần tài khoản Udemy.
+**End-to-end (Playwright):** một trang fixture cục bộ có `<video>` và track VTT dựng giống Udemy, nạp extension thật. Runs được trong CI, không cần tài khoản Udemy.
 
-**Thủ công:** chỉ `player-bridge`. Đó là module duy nhất có môi trường không thể giả lập trung thực.
+**Thủ công:** chỉ `player-bridge` và việc bắt request phụ đề. Đó là hai phần có môi trường không thể giả lập trung thực.
 
 ## 12. Các mốc
 
-**M1 — pipeline chạy được.** `player-bridge`, `caption-source`, `segmenter`, translator, `WebSpeechProvider`, `scheduler`. Không cần cài đặt gì, nên bộ máy đồng bộ được kiểm chứng riêng trước khi đưa server vào. Hoàn thành khi một bài giảng Udemy thật phát ra tiếng Việt.
+**M1 — pipeline chạy được.** `player-bridge`, `caption-source` (kèm xác nhận endpoint thật của Udemy), `segmenter`, translator, `WebSpeechProvider`, `scheduler`. Không cần cài đặt gì, nên bộ máy đồng bộ được kiểm chứng riêng trước khi đưa server vào. Hoàn thành khi một bài giảng Udemy thật phát ra tiếng Việt.
 
-**M2 — giọng thật.** `VieNeuProvider`, server cục bộ, `launchd` agent, dò khả dụng và cơ chế dự phòng.
+**M2 — giọng thật.** `VieNeuProvider`, server cục bộ chạy native, `launchd` agent, `Dockerfile` kèm theo, dò khả dụng và cơ chế dự phòng.
 
 **M3 — dùng được hằng ngày.** Cache IndexedDB, bảng điều khiển, lớp phụ đề tiếng Việt, trang options.
 
-**M4 — mài các cạnh sắc.** Linter phiên âm, toàn bộ bảng xử lý lỗi, tinh chỉnh việc dọn cache.
+**M4 — mài các cạnh sắc.** Toàn bộ bảng xử lý lỗi, tinh chỉnh việc dọn cache, tinh chỉnh prompt giữ thuật ngữ.
 
 ## 13. Câu hỏi còn treo
 
-1. **Phiên âm giúp hay hại với VieNeu Nano?** Tài liệu ghi Nano yếu ở văn bản chuyển ngữ En-Vi, và đó chính là thứ phiên âm muốn né — nhưng Nano có thể vốn đã đọc tiếng Anh với chất giọng Việt nghe tự nhiên. Cứ làm tùy chọn, quyết định dựa trên bài giảng thật.
-2. **Tổng hợp 8 bước có nghe tệ hơn 16 bước không?** Nếu không thì dùng 8: RTF đo được giảm từ 0.18 xuống 0.094, tức CPU giảm một nửa — điều đáng kể khi máy chạy pin.
-3. **`textTracks` của Udemy có luôn lộ đủ danh sách cue không?** Phụ đề VTT nạp rời thì có; phụ đề nhúng theo phân đoạn trong HLS thì có thể không. Đường dự phòng qua API lecture tồn tại vì lý do này, nhưng điều kiện kích hoạt cần xác nhận trên khóa học thật.
+1. **Tổng hợp 8 bước có nghe tệ hơn 16 bước không?** Nếu không thì dùng 8: RTF đo được giảm từ 0.18 xuống 0.094, tức CPU giảm một nửa — điều đáng kể khi máy chạy pin. Đang chờ đánh giá bằng tai.
+2. **Endpoint phụ đề của Udemy có dạng chính xác ra sao?** Cơ chế bắt request đã chốt; còn phải xác nhận URL, tên trường chứa caption, và liệu có khóa học nào chỉ dùng phụ đề nhúng trong HLS hay không. Xác nhận ở M1.
+3. **Có cần đo mức phạt hiệu năng của Colima không?** Chỉ đáng làm nếu bạn thực sự muốn chạy server trong Docker thay vì native.
 4. **Server nên chạy thường trực hay bật theo nhu cầu?** Thường trực thì đơn giản hơn và tốn RAM nhàn rỗi; bật theo nhu cầu thì tiết kiệm tài nguyên nhưng thêm độ trễ khởi động vào câu đầu tiên.
 
 ---
@@ -244,9 +281,9 @@ Bộ máy đồng bộ là nơi bug sẽ trú ngụ, và gần như toàn bộ n
 | Apple `Linh (Enhanced)` | 13.33s | 0.12 | Không với tới được qua Web Speech; cần native messaging |
 | Apple `Linh` (compact) | không đo | — | Giọng tiếng Việt duy nhất mà Web Speech của Chrome lộ ra; đo được 5.56s so với 5.17s của bản Enhanced trên một câu ngắn hơn |
 | Piper `vais1000-medium` | 9.85s | 0.045 | Giọng tiếng Việt chính thức tốt nhất của Piper; khoảng 1.000 câu huấn luyện |
-| `CSA v3` định dạng Piper | 9.53s | 0.061 | 257 giờ dữ liệu tổng hợp, 5 giọng |
+| `CSA v3` định dạng Piper | 9.53s | 0.061 | 257 giờ dữ liệu tổng hợp, 5 giọng — ứng viên cho `WasmProvider` ở v2 |
 | **VieNeu v3 Nano, 16 bước** | **10.67s** | **0.18** | 24 kHz, 11 giọng dựng sẵn — **đã chọn** |
-| VieNeu v3 Nano, 8 bước | 10.69s | 0.094 | Chênh lệch chất lượng chưa đánh giá |
+| VieNeu v3 Nano, 8 bước | 10.69s | 0.094 | Chênh lệch chất lượng đang được đánh giá |
 
 Nạp model lần đầu kèm tải về: 56.7s. Nạp khi đã có sẵn: khoảng 3s theo tài liệu gốc.
 
