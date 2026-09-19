@@ -67,4 +67,23 @@ describe('translateBatch', () => {
     expect(out.get(1)).toBe('một')
     expect(out.has(2)).toBe(false)
   })
+
+  it('không báo lỗi tần suất cũ khi lần sau gọi được nhưng mô hình trả rỗng', async () => {
+    // Each call gets its own `Response` (via a fresh `reply('[]')`), not a
+    // shared one: a `Response` body can only be read once, and `callOnce`
+    // reads it on every attempt that reaches `res.json()`.
+    const f = vi.fn()
+      .mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
+      .mockResolvedValueOnce(reply('[]'))
+      .mockResolvedValueOnce(reply('[]'))
+    const out = await translateBatch(batch, 'KEY', f as unknown as typeof fetch)
+    expect(out.size).toBe(0)
+    expect(f).toHaveBeenCalledTimes(3)
+  })
+
+  it('ném lỗi khi mọi lần thử đều bị giới hạn tần suất', async () => {
+    const f = vi.fn(async () => new Response('rate limited', { status: 429 }))
+    await expect(translateBatch(batch, 'KEY', f as unknown as typeof fetch)).rejects.toThrow(/429/)
+    expect(f).toHaveBeenCalledTimes(3)
+  })
 })

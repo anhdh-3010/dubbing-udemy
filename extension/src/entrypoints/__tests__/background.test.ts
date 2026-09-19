@@ -57,8 +57,14 @@ describe('background: fetch-caption security gate', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  it('từ chối localhost và không gọi fetch', async () => {
+  it('từ chối localhost qua http (chặn ở bước kiểm tra giao thức) và không gọi fetch', async () => {
     const res = await sendFetchCaption('http://127.0.0.1:8000/x.vtt')
+    expect(res).toMatchObject({ error: expect.any(String) })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('từ chối localhost qua https (chặn ở bước kiểm tra host) và không gọi fetch', async () => {
+    const res = await sendFetchCaption('https://127.0.0.1:8000/x.vtt')
     expect(res).toMatchObject({ error: expect.any(String) })
     expect(fetchMock).not.toHaveBeenCalled()
   })

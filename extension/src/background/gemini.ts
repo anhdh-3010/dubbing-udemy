@@ -50,6 +50,7 @@ export async function translateBatch(
     let raw: string
     try {
       raw = await callOnce(buildPrompt(remaining), apiKey, fetchImpl)
+      lastError = null
     } catch (e) {
       // A rejected key is final. A rate limit or a 5xx is exactly what the
       // retry loop is for, and whatever earlier attempts already translated
