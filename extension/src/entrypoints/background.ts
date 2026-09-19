@@ -76,9 +76,15 @@ export default defineBackground(() => {
         // credentials, such as `https://evil.com@www.udemy.com/x.vtt`) into
         // a rejection, which the `.catch` below handles. This wrapper only
         // guarantees the listener callback cannot throw before `return true`.
+        // fetch() only rejects on a network-level failure; a 403/404/5xx
+        // resolves normally. Without the r.ok check, that response's body
+        // (often an HTML error page) would be handed to parseVtt as if it
+        // were the caption file, come back as zero cues, and let the
+        // content script fall through to the <track> fallback — silently
+        // reproducing the "Bài giảng này không có phụ đề." misdiagnosis F1
+        // exists to remove, just one layer further down.
         fetch(msg.url, { credentials: 'include', redirect: 'error' })
-          .then((r) => r.text())
-          .then((text) => sendResponse({ text }))
+          .then((r) => (r.ok ? r.text().then((text) => sendResponse({ text })) : sendResponse({ error: `HTTP ${r.status}` })))
           .catch((e) => sendResponse({ error: String(e) }))
       } catch (e) {
         sendResponse({ error: String(e) })
