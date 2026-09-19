@@ -1,18 +1,25 @@
 import type { Cue } from '../core/types'
 
 /**
- * Fallback for when no .vtt request is seen — the page may have served the
- * captions from its own cache. Setting mode to 'hidden' makes the browser load
- * the cues without drawing them over the video.
+ * Reads whatever cues the browser's native <track> elements currently
+ * expose. Setting mode to 'hidden' makes the browser load the cues without
+ * drawing them over the video.
+ *
+ * When `requireEnglish` is true, only a track whose `language` starts with
+ * "en" counts, and no cues at all counts as a miss (rather than falling back
+ * to a different track) — used while polling in cuesFromTextTracksWhenReady,
+ * so a same-language match is never dropped in favour of a track that merely
+ * finished loading first.
  */
-export function cuesFromTextTracks(video: HTMLVideoElement): Cue[] {
+export function cuesFromTextTracks(video: HTMLVideoElement, requireEnglish = false): Cue[] {
   const candidates: { track: TextTrack; cues: Cue[] }[] = []
 
   for (const track of Array.from(video.textTracks)) {
     if (track.kind !== 'captions' && track.kind !== 'subtitles') continue
     // Enable every candidate track, not just the first: a cold track (see
-    // cuesFromTracksWhenReady) yields no cues on this pass either way, and
-    // deciding the winner needs cues from all of them, not just the first.
+    // cuesFromTextTracksWhenReady) yields no cues on this pass either way,
+    // and deciding the winner needs cues from all of them, not just the
+    // first.
     track.mode = 'hidden'
     const cues: Cue[] = []
     for (const cue of Array.from(track.cues ?? [])) {
@@ -25,9 +32,52 @@ export function cuesFromTextTracks(video: HTMLVideoElement): Cue[] {
 
   // A multi-language lecture can hand the translator a non-English track —
   // even a Vietnamese one, which would then be "translated" into itself.
-  // Prefer English; otherwise fall back to the first track that yielded cues.
-  const chosen =
-    candidates.find((c) => c.track.language.toLowerCase().startsWith('en')) ?? candidates[0]
+  const english = candidates.find((c) => c.track.language.toLowerCase().startsWith('en'))
+  if (requireEnglish) return english ? english.cues.sort((a, b) => a.start - b.start) : []
 
+  const chosen = english ?? candidates[0]
   return chosen ? chosen.cues.sort((a, b) => a.start - b.start) : []
+}
+
+export interface WhenReadyOptions {
+  /** Total time to hold out for an English track before accepting anything. */
+  deadlineMs?: number
+  /** Delay between reads while waiting. */
+  intervalMs?: number
+  /**
+   * Checked on every iteration; a true return ends the wait early with `[]`.
+   * The caller stays free of DOM state here — e.g. content.ts uses this to
+   * bail out the moment a caption URL shows up, so it can fetch the VTT
+   * directly instead of continuing to wait on <track> elements.
+   */
+  abortWhen?: () => boolean
+}
+
+/**
+ * Cold <track> elements fetch and parse in parallel with the first read, so a
+ * single synchronous call reliably returns nothing. Polls instead of
+ * listening for `load`, because script-created tracks (hls.js, video.js,
+ * ...) never fire it.
+ *
+ * `cuesFromTextTracks` enables every candidate track on its first read, so a
+ * multi-language lecture has all of them racing to finish loading in
+ * arbitrary order. This polls with `requireEnglish` so it never settles for
+ * a non-English track just because it happened to finish first; only once
+ * the deadline passes does it fall back to whatever `cuesFromTextTracks`
+ * finds without that constraint.
+ */
+export async function cuesFromTextTracksWhenReady(
+  video: HTMLVideoElement,
+  opts: WhenReadyOptions = {},
+): Promise<Cue[]> {
+  const { deadlineMs = 3000, intervalMs = 150, abortWhen } = opts
+  const deadline = Date.now() + deadlineMs
+
+  for (;;) {
+    const cues = cuesFromTextTracks(video, true)
+    if (cues.length > 0) return cues
+    if (abortWhen?.()) return []
+    if (Date.now() >= deadline) return cuesFromTextTracks(video)
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
 }

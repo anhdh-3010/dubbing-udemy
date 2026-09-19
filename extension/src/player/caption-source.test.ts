@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { cuesFromTextTracks } from './caption-source'
+import { describe, expect, it, vi } from 'vitest'
+import { cuesFromTextTracks, cuesFromTextTracksWhenReady } from './caption-source'
 
 // jsdom does not implement addTextTrack (it is a stubbed notImplementedMethod
 // that logs and returns undefined) nor VTTCue/TextTrack/TextTrackList at all,
@@ -67,5 +67,112 @@ describe('cuesFromTextTracks', () => {
     const cues = cuesFromTextTracks(video)
 
     expect(cues).toEqual([{ start: 0, end: 2, text: 'hello' }])
+  })
+
+  it('với requireEnglish=true thì bỏ qua track không phải tiếng Anh dù đã có cue', () => {
+    const spanish = fakeTrack('captions', [{ startTime: 0, endTime: 2, text: 'hola' }], 'es')
+    const video = videoWithTracks(spanish)
+
+    expect(cuesFromTextTracks(video, true)).toEqual([])
+  })
+})
+
+describe('cuesFromTextTracksWhenReady', () => {
+  it('trả cue ngay nếu track tiếng Anh đã sẵn sàng, không cần chờ', async () => {
+    const english = fakeTrack('captions', [{ startTime: 0, endTime: 2, text: 'hello' }], 'en')
+    const video = videoWithTracks(english)
+
+    const cues = await cuesFromTextTracksWhenReady(video)
+
+    expect(cues).toEqual([{ start: 0, end: 2, text: 'hello' }])
+  })
+
+  it('chờ tới khi track có cue ở lần đọc sau', async () => {
+    vi.useFakeTimers()
+    try {
+      const english = fakeTrack('captions', [], 'en')
+      const video = videoWithTracks(english)
+
+      const promise = cuesFromTextTracksWhenReady(video, { intervalMs: 100, deadlineMs: 1000 })
+      // The first (synchronous) read already ran and found nothing; the loop
+      // is now waiting on its first tick. Populate the cue before that tick
+      // fires so the second read finds it.
+      english.cues.push({ startTime: 0, endTime: 2, text: 'hello' })
+      await vi.advanceTimersByTimeAsync(100)
+
+      expect(await promise).toEqual([{ start: 0, end: 2, text: 'hello' }])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('hết hạn thì trả về bất kỳ cue nào đang có, kể cả không phải tiếng Anh', async () => {
+    vi.useFakeTimers()
+    try {
+      const spanish = fakeTrack('captions', [{ startTime: 0, endTime: 2, text: 'hola' }], 'es')
+      const video = videoWithTracks(spanish)
+
+      const promise = cuesFromTextTracksWhenReady(video, { intervalMs: 100, deadlineMs: 300 })
+      await vi.advanceTimersByTimeAsync(300)
+
+      expect(await promise).toEqual([{ start: 0, end: 2, text: 'hola' }])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('hết hạn mà không có track nào thì trả mảng rỗng', async () => {
+    vi.useFakeTimers()
+    try {
+      const video = videoWithTracks()
+
+      const promise = cuesFromTextTracksWhenReady(video, { intervalMs: 100, deadlineMs: 300 })
+      await vi.advanceTimersByTimeAsync(300)
+
+      expect(await promise).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('chờ track tiếng Anh thay vì lấy track tiếng Tây Ban Nha đã có cue trước', async () => {
+    vi.useFakeTimers()
+    try {
+      // The exact case that broke R4 in the real path: Spanish already has
+      // cues; taking the first non-empty read would segment the lecture
+      // from Spanish and send it to the translator as if it were English.
+      const spanish = fakeTrack('captions', [{ startTime: 0, endTime: 2, text: 'hola' }], 'es')
+      const english = fakeTrack('captions', [], 'en')
+      const video = videoWithTracks(spanish, english)
+
+      const promise = cuesFromTextTracksWhenReady(video, { intervalMs: 100, deadlineMs: 1000 })
+      english.cues.push({ startTime: 0, endTime: 2, text: 'hello' })
+      await vi.advanceTimersByTimeAsync(100)
+
+      expect(await promise).toEqual([{ start: 0, end: 2, text: 'hello' }])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('bỏ vòng chờ ngay khi abortWhen báo true, trả mảng rỗng', async () => {
+    vi.useFakeTimers()
+    try {
+      const english = fakeTrack('captions', [], 'en')
+      const video = videoWithTracks(english)
+      let aborted = false
+
+      const promise = cuesFromTextTracksWhenReady(video, {
+        intervalMs: 100,
+        deadlineMs: 1000,
+        abortWhen: () => aborted,
+      })
+      aborted = true
+      await vi.advanceTimersByTimeAsync(100)
+
+      expect(await promise).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
