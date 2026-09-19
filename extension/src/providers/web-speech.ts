@@ -27,6 +27,7 @@ export class WebSpeechProvider implements TTSProvider {
   }
 
   private voice(): SpeechSynthesisVoice | undefined {
+    if (typeof speechSynthesis === 'undefined') return undefined
     return speechSynthesis.getVoices().find((v) => v.lang.toLowerCase().startsWith('vi'))
   }
 
@@ -37,6 +38,7 @@ export class WebSpeechProvider implements TTSProvider {
 
     let native: SpeechSynthesisUtterance | null = null
     let startedAt = 0
+    let cancelled = false
 
     return {
       duration,
@@ -51,18 +53,42 @@ export class WebSpeechProvider implements TTSProvider {
           native = u
           startedAt = Date.now()
 
+          // The engine queues utterances, so the clock only really starts when
+          // it begins speaking. Measuring from here would charge queue latency
+          // to the speech and teach the estimator a rate that is too slow.
+          u.onstart = () => {
+            startedAt = Date.now()
+          }
+
           u.onend = () => {
+            if (cancelled) {
+              // Chromium reports a mid-sentence cancel as `end`. Learning from
+              // a partial reading would teach a wildly inflated rate, so this
+              // observation is dropped rather than recorded.
+              reject(new DOMException('cancelled', 'AbortError'))
+              return
+            }
             // Normalise back to rate 1.0 before feeding the estimator.
             estimator.observe(text, ((Date.now() - startedAt) / 1000) * rate)
             resolve()
           }
-          u.onerror = () => reject(new Error('speech synthesis failed'))
+
+          u.onerror = () => {
+            // The spec reports a cancel as an `interrupted` error where
+            // Chromium reports `end`. Either way, a cancel is not a failure.
+            reject(
+              cancelled
+                ? new DOMException('cancelled', 'AbortError')
+                : new Error('speech synthesis failed'),
+            )
+          }
 
           speechSynthesis.speak(u)
         })
       },
 
       cancel(): void {
+        cancelled = true
         if (native !== null) speechSynthesis.cancel()
       },
     }
