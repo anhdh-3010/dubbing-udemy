@@ -67,6 +67,15 @@ export class Scheduler {
     this.spoken.clear()
   }
 
+  /** The video paused. Stop the dub from talking over a frozen frame, but —
+   *  unlike onSeek() — leave `spoken` untouched: the viewer already heard
+   *  this segment start, so resuming at the same position must not replay
+   *  it. tick() already won't re-select an id still in `spoken`. */
+  onPause(): void {
+    this.generation++
+    this.cancelCurrent()
+  }
+
   stop(): void {
     this.stopped = true
     this.generation++

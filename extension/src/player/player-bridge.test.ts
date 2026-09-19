@@ -48,6 +48,21 @@ describe('createPlayerBridge', () => {
     bridge.stop()
   })
 
+  it('chuyển tiếp sự kiện pause', async () => {
+    const onPause = vi.fn()
+    const video = document.createElement('video')
+    document.body.appendChild(video)
+
+    const bridge = createPlayerBridge(document)
+    bridge.on('pause', onPause)
+    bridge.start()
+    await vi.waitFor(() => expect(bridge.video).toBe(video))
+
+    video.dispatchEvent(new Event('pause'))
+    expect(onPause).toHaveBeenCalled()
+    bridge.stop()
+  })
+
   it('chuyển tiếp ratechange kèm tốc độ mới', async () => {
     const onRate = vi.fn()
     const video = document.createElement('video')

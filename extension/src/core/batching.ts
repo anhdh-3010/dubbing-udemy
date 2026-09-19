@@ -16,7 +16,7 @@ export function planBatches(
   if (pending.length === 0) return []
 
   const batches: Segment[][] = []
-  for (let i = 0; i < pending.length; i += batchSize) {
+  for (let i = 0; i < pending.length; i += Math.max(1, batchSize)) {
     batches.push(pending.slice(i, i + batchSize))
   }
 

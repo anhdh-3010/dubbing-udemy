@@ -81,6 +81,33 @@ describe('Scheduler', () => {
     expect(video.volume).toBeCloseTo(1)
   })
 
+  it('tạm dừng thì huỷ câu đang đọc và khôi phục âm lượng/tốc độ', async () => {
+    const { video, tts, scheduler } = setup(() => 20) // force stretching so rate leaves baseline
+    video.currentTime = 1.0
+    await scheduler.tick()
+    expect(video.volume).toBeCloseTo(0.1)
+    expect(video.playbackRate).toBeLessThan(1)
+    scheduler.onPause()
+    expect(tts.last?.cancelled).toBe(true)
+    expect(video.volume).toBeCloseTo(1)
+    expect(video.playbackRate).toBeCloseTo(1) // restored to baseline
+  })
+
+  it('tạm dừng không đánh dấu lại spoken: tick ở cùng vị trí không đọc lại', async () => {
+    const { video, tts, scheduler } = setup()
+    video.currentTime = 1.0
+    await scheduler.tick()
+    scheduler.onPause()
+    expect(tts.prepared).toHaveLength(1)
+
+    // Viewer resumes at the same position tick() already committed to.
+    video.currentTime = 1.0
+    await scheduler.tick()
+    // Unlike onSeek(), onPause() must leave `spoken` intact, so this segment
+    // is not re-selected and no second utterance is prepared.
+    expect(tts.prepared).toHaveLength(1)
+  })
+
   it('sau khi tua lùi thì đọc lại segment đó', async () => {
     const { video, tts, scheduler } = setup()
     video.currentTime = 1.0

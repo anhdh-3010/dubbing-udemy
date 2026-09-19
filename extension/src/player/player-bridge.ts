@@ -10,6 +10,7 @@ export interface PlayerBridgeEvents {
   lectureChanged: (lectureId: string) => void
   seeked: () => void
   ratechange: (rate: number) => void
+  pause: () => void
 }
 
 type Handlers = { [K in keyof PlayerBridgeEvents]?: PlayerBridgeEvents[K][] }
@@ -52,11 +53,13 @@ export function createPlayerBridge(doc: Document): PlayerBridge {
   const onRateChange = () => {
     if (video) emit('ratechange', video.playbackRate)
   }
+  const onPause = () => emit('pause')
 
   const detach = () => {
     if (!video) return
     video.removeEventListener('seeked', onSeeked)
     video.removeEventListener('ratechange', onRateChange)
+    video.removeEventListener('pause', onPause)
     video = null
     emit('detached')
   }
@@ -77,6 +80,7 @@ export function createPlayerBridge(doc: Document): PlayerBridge {
     video = found
     video.addEventListener('seeked', onSeeked)
     video.addEventListener('ratechange', onRateChange)
+    video.addEventListener('pause', onPause)
     emit('attached', video)
   }
 

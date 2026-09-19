@@ -9,7 +9,7 @@ export default defineConfig({
     host_permissions: [
       'https://www.udemy.com/*',
       'https://*.udemycdn.com/*',
-      'http://127.0.0.1/*',
+      'https://generativelanguage.googleapis.com/*',
     ],
   },
   hooks: {

@@ -75,11 +75,24 @@ export default defineContentScript({
     })
 
     /** Fetches and parses the VTT at the current `captionUrl`, or `[]` if
-     *  there isn't one or the fetch/parse comes up empty. */
+     *  there isn't one or the fetch/parse comes up empty.
+     *
+     *  An allowlist rejection, a blocked redirect, a CDN 403, and a plain
+     *  network error all come back as `{ error }` from the service worker.
+     *  Surfacing that (instead of silently returning `[]`, indistinguishable
+     *  from "this lecture genuinely has no captions") is what lets whoever
+     *  is watching this run tell those apart from the `<track>` fallback's
+     *  own "no subtitles" outcome. */
     const fetchVttCues = async (): Promise<Cue[]> => {
       if (captionUrl === null) return []
       const res = (await chrome.runtime.sendMessage({ type: 'fetch-caption', url: captionUrl })) as {
         text?: string
+        error?: string
+      }
+      if (res?.error) {
+        console.warn('[udemy-dubbing]', res.error)
+        showNotice(`Lỗi tải phụ đề: ${res.error}`)
+        return []
       }
       return typeof res?.text === 'string' ? parseVtt(res.text) : []
     }
@@ -129,7 +142,18 @@ export default defineContentScript({
      *  one. `gen` is what actually detects the switch and stops. */
     const translateAll = async (video: HTMLVideoElement, segs: Segment[], gen: number): Promise<void> => {
       for (const batch of planBatches(segs, video.currentTime)) {
-        const res = (await chrome.runtime.sendMessage({ type: 'translate', batch })) as TranslateResponse
+        let res: TranslateResponse
+        try {
+          res = (await chrome.runtime.sendMessage({ type: 'translate', batch })) as TranslateResponse
+        } catch (e) {
+          // chrome.runtime.sendMessage rejects — rather than resolving to an
+          // error payload — when the service worker is recycled mid-request
+          // or the message port closes. That must not end translation for
+          // the rest of the lecture any more than a res.error does: warn and
+          // move on to the next batch.
+          console.warn('[udemy-dubbing]', e)
+          continue
+        }
 
         // The viewer may have moved to another lecture while this request
         // was in flight. Nothing downstream would ever read a translation
@@ -216,13 +240,14 @@ export default defineContentScript({
         rafId = requestAnimationFrame(loop)
 
         void translateAll(video, segs, gen).catch((e) => {
-          // chrome.runtime.sendMessage rejects — rather than resolving to an
-          // error payload — when the service worker is recycled mid-request
-          // or the port closes. Left unhandled, that would silently end all
-          // further translation for the rest of the lecture, exactly what
-          // the res.fatal handling above exists to prevent. Still gated on
-          // generation: this rejection can land after the viewer has moved
-          // on, and lecture A's failure must not toast over lecture B.
+          // The per-batch sendMessage rejection (service worker recycled
+          // mid-request, port closed) is now caught and skipped inside
+          // translateAll's loop, so it no longer reaches here. This backstop
+          // is for anything else that makes the translateAll promise itself
+          // reject — a bug in the loop body, for instance — so one such
+          // failure is reported instead of becoming an unhandled rejection.
+          // Still gated on generation: this can land after the viewer has
+          // moved on, and lecture A's failure must not toast over lecture B.
           if (gen !== generation) return
           console.warn('[udemy-dubbing]', e)
           showNotice('Lỗi dịch phụ đề.')
@@ -235,6 +260,7 @@ export default defineContentScript({
 
     bridge.on('attached', attach)
     bridge.on('seeked', () => scheduler?.onSeek())
+    bridge.on('pause', () => scheduler?.onPause())
     bridge.on('ratechange', (rate) => {
       // The scheduler writes playbackRate itself while stretching; those writes
       // fire ratechange too, and latching one as the viewer's choice would drag
@@ -244,11 +270,15 @@ export default defineContentScript({
     })
     bridge.on('detached', teardown)
     bridge.on('lectureChanged', (id) => {
-      // The element swap and the URL update can land in different scans; if
-      // the ordinary 'attached' path already committed to this lecture,
-      // redoing teardown+attach here would duplicate a translation pass
-      // (real Gemini spend) and clear captionUrl a second time, possibly
-      // after the page will never report that VTT again.
+      // Belt-and-braces guard, not a fix for an observed defect: in scan(),
+      // the lectureChanged emit always precedes the element-identity check
+      // that would update attach()'s bookkeeping for this id, so by the time
+      // this handler runs, attachedLectureId cannot yet equal `id` in any of
+      // the currently known navigation orderings — this branch does not fire
+      // today. Kept in case a future reordering of scan() (or a new caller
+      // of attach()) makes it reachable; removing it would cost nothing now
+      // but risks silently reintroducing the duplicate teardown+attach this
+      // was meant to prevent.
       if (id === attachedLectureId) return
 
       // Udemy's SPA can otherwise reuse the same <video> element across
