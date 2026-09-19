@@ -26,7 +26,7 @@ Khi mở bài giảng, extension lấy file phụ đề, gộp các cue thành c
 | Giọng đọc | VieNeu v3 Nano, giọng **Minh Quân**, qua server HTTP cục bộ | Chất lượng tiếng Việt cao nhất mà vẫn miễn phí và chạy offline trên máy này; 11 giọng dựng sẵn; API tương thích OpenAI |
 | Số bước tổng hợp | **8 bước** | Nghe hay hơn 16 bước khi đánh giá bằng tai, và tốn đúng một nửa CPU |
 | Giọng dự phòng | Web Speech API (`Linh`) | Giữ extension dùng được khi server cục bộ không chạy |
-| Đóng gói server | **Docker** (`server/`) | Quyết định của chủ dự án. Đã dựng và đo; cái giá là chậm hơn native 2.7 lần, xem mục 8.1 |
+| Đóng gói server | **Native + `launchd`** | Docker đã dựng và đo được, nhưng chậm hơn 2.7 lần trong khi lợi ích tái lập của nó không được dùng tới trên một máy một người. `Dockerfile` vẫn giữ trong repo. Xem mục 8.1 |
 | Chiến lược đồng bộ | Co giãn thích ứng; không bao giờ dừng video | Dừng video làm bài giảng giật cục và kéo dài thời lượng |
 | Chiến lược chia lô | Dịch cả bài ở nền, lô đang xem trước | Độ trễ của streaming nhưng vẫn giữ chất lượng và khả năng cache của dịch trọn file |
 | Phụ đề | Hiển thị phụ đề tiếng Việt | Gần như miễn phí khi đã có bản dịch; giúp người xem đối chiếu khi giọng đọc khó nghe |
@@ -205,9 +205,15 @@ Danh sách từ cần giữ nguyên nằm trong prompt chứ không phải một
 
 ### 8.1 Đóng gói
 
-**Đã chọn Docker.** Ba file trong `server/`: `Dockerfile`, `docker-compose.yml`, `app.py`.
+**Đã chọn native.** `server/app.py` chạy thẳng bằng Python trên máy, dưới một `launchd` user agent:
 
-Container chỉ publish cổng ra `127.0.0.1:8770` chứ không ra mọi interface — đã kiểm chứng là không với tới được qua IP LAN của máy. Model không nằm trong image; thư mục cache HuggingFace của host được mount vào `/models`, nên image 1.45GB không phải cõng thêm 269MB trọng số và cũng không tải lại lần nữa.
+```bash
+OMP_NUM_THREADS=2 PORT=8770 HOST=127.0.0.1 python app.py
+```
+
+`HOST=127.0.0.1` là bắt buộc chứ không phải mặc định tiện tay: nó giữ server trên loopback, đúng điều kiện mà miễn trừ mixed-content ở mục 4.2 dựa vào, và không để bất cứ thứ gì ngoài máy với tới.
+
+**Docker vẫn dùng được, chỉ không phải mặc định.** `server/Dockerfile` và `docker-compose.yml` đã build và chạy thật, publish cổng ra `127.0.0.1:8770`, mount cache HuggingFace của host vào `/models` nên image 1.45GB không phải cõng thêm 269MB trọng số. Lý do không chọn: nó chậm hơn 2.7 lần trong khi thứ nó bán — môi trường tái lập, dễ chuyển máy — lại không được tiêu thụ trên một máy phục vụ một người. Khi nào cần dựng trên máy khác hoặc muốn gỡ sạch không để lại Python trên hệ thống thì nó đáng giá ngay.
 
 **Số đo thật, không phải ước tính.** Bản thiết kế trước viết rằng Colima "không bị phạt nặng" vì là VM arm64 không giả lập kiến trúc. **Điều đó sai.** Đo trên cùng một đoạn 17.2 giây audio, cùng model Nano 8 bước, và — quan trọng — qua **đúng cùng một file `app.py`** để không lẫn tạp chất:
 
@@ -225,11 +231,11 @@ Số CPU không phải nguyên nhân: bản native ép xuống đúng 2 luồng 
 
 **Hệ quả chấp nhận được.** RTF 0.284 vẫn thấp hơn 1.0 rất nhiều, nên cơ chế lookahead vẫn bám kịp video thoải mái. Cái giá thật là điện năng: TTS tốn gần gấp ba lần thời gian CPU, đáng để ý khi máy chạy pin. Đổi sang native chỉ là chạy cùng `app.py` theo cách khác, extension không phải sửa gì.
 
-**Đã kiểm chứng khi dựng:**
+**Đã kiểm chứng khi dựng, ở cả hai cách chạy:**
 - `/health` trả về `model_loaded: false` trước request đầu tiên — nạp lười hoạt động đúng thiết kế.
-- Request đầu tiên tốn 7.72s tổng cộng, gồm cả việc nạp model. Các request sau còn 4.89s.
-- RAM container ở mức 639MB trên VM 2GiB — dư chỗ.
 - CORS nhận `chrome-extension://*`, từ chối origin khác bằng 400.
+- Cổng chỉ với tới được qua `127.0.0.1`, không qua IP LAN của máy.
+- Header `X-Audio-Duration` trả về thời lượng chính xác, scheduler không cần giải mã audio mới biết.
 
 ### 8.2 WASM — trạng thái thật
 
