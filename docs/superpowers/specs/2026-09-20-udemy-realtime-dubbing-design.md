@@ -26,7 +26,7 @@ Khi mở bài giảng, extension lấy file phụ đề, gộp các cue thành c
 | Giọng đọc | VieNeu v3 Nano, giọng **Minh Quân**, qua server HTTP cục bộ | Chất lượng tiếng Việt cao nhất mà vẫn miễn phí và chạy offline trên máy này; 11 giọng dựng sẵn; API tương thích OpenAI |
 | Số bước tổng hợp | **8 bước** | Nghe hay hơn 16 bước khi đánh giá bằng tai, và tốn đúng một nửa CPU |
 | Giọng dự phòng | Web Speech API (`Linh`) | Giữ extension dùng được khi server cục bộ không chạy |
-| Đóng gói server | Native + `launchd` mặc định; kèm `Dockerfile` để tái lập | Xem mục 8.1 |
+| Đóng gói server | **Docker** (`server/`) | Quyết định của chủ dự án. Đã dựng và đo; cái giá là chậm hơn native 3.3 lần, xem mục 8.1 |
 | Chiến lược đồng bộ | Co giãn thích ứng; không bao giờ dừng video | Dừng video làm bài giảng giật cục và kéo dài thời lượng |
 | Chiến lược chia lô | Dịch cả bài ở nền, lô đang xem trước | Độ trễ của streaming nhưng vẫn giữ chất lượng và khả năng cache của dịch trọn file |
 | Phụ đề | Hiển thị phụ đề tiếng Việt | Gần như miễn phí khi đã có bản dịch; giúp người xem đối chiếu khi giọng đọc khó nghe |
@@ -65,6 +65,7 @@ Udemy phục vụ qua HTTPS, nên một request HTTP trần lẽ ra bị chặn 
 | `scheduler` | Vòng lặp lõi: đọc `currentTime` mỗi frame, quyết định đọc câu nào, tính tốc độ, điều khiển ducking và `playbackRate` | tất cả phần trên |
 | `cache` | IndexedDB: bản dịch theo bài học, audio đã tổng hợp, dọn theo LRU | — |
 | `ui` | Bảng điều khiển và lớp phụ đề trong Shadow DOM; trang options | `scheduler` |
+| `server/app.py` | Wrapper FastAPI bọc VieNeu Nano; chạy ngoài trình duyệt trong Docker | — |
 
 ### 4.4 Luồng dữ liệu
 
@@ -189,7 +190,9 @@ Danh sách từ cần giữ nguyên nằm trong prompt chứ không phải một
 
 **Runtime:** `vieneu` (đã xác nhận v3.8.1), đường ONNX, không cần PyTorch. Model `VieNeu-TTS-v3-Nano`, 269MB trọng số, 24 kHz, giọng `Minh Quân`.
 
-**Endpoint:** `POST http://127.0.0.1:<port>/v1/audio/speech`, tương thích OpenAI. Có một hệ quả đáng nói: **một implementation `TTSProvider` duy nhất** phục vụ được cả server này lẫn API của OpenAI, nếu sau này muốn dùng đám mây. Chỉ khác base URL.
+**Endpoint:** `POST http://127.0.0.1:8770/v1/audio/speech`, giữ đúng dạng request của OpenAI. Có một hệ quả đáng nói: **một implementation `TTSProvider` duy nhất** phục vụ được cả server này lẫn API của OpenAI, nếu sau này muốn dùng đám mây. Chỉ khác base URL.
+
+**Không dùng được server đi kèm `vieneu`.** Module `apps.openai_speech` trong gói pip hardcode `Vieneu(mode="v3turbo")` ở dòng 100 và không có biến môi trường nào đổi sang Nano. Turbo chậm hơn Nano khoảng sáu lần trên CPU, nên dự án tự viết một wrapper FastAPI mỏng tại `server/app.py`. Wrapper này cũng cho ba thứ mà bản gốc không có: nạp model lười đúng như thiết kế, trả thời lượng chính xác qua header `X-Audio-Duration` để scheduler khỏi phải giải mã audio mới biết, và chính sách CORS đúng cho origin của extension.
 
 **Yêu cầu:**
 - Server đặt header `Access-Control-Allow-Origin: chrome-extension://<id của extension>`.
@@ -202,15 +205,26 @@ Danh sách từ cần giữ nguyên nằm trong prompt chứ không phải một
 
 ### 8.1 Đóng gói
 
-Hai cách, cùng một interface HTTP nên đổi qua lại không ảnh hưởng gì tới extension.
+**Đã chọn Docker.** Ba file trong `server/`: `Dockerfile`, `docker-compose.yml`, `app.py`.
 
-**Native + `launchd` — mặc định.** Một venv Python và một file plist trong `~/Library/LaunchAgents`. Chạy thẳng trên CPU, không có tầng ảo hóa nào ở giữa, khởi động cùng máy.
+Container chỉ publish cổng ra `127.0.0.1:8770` chứ không ra mọi interface — đã kiểm chứng là không với tới được qua IP LAN của máy. Model không nằm trong image; thư mục cache HuggingFace của host được mount vào `/models`, nên image 1.45GB không phải cõng thêm 269MB trọng số và cũng không tải lại lần nữa.
 
-**Docker — tùy chọn, dành cho tái lập.** Máy này đã có Docker CLI 28.5.2 và Colima 0.9.1, nhưng daemon chưa chạy. Colima dựng một VM Linux arm64 nên không có giả lập kiến trúc và phần tính toán không bị phạt nặng, nhưng vẫn mất một phần hiệu năng cho tầng ảo hóa và tốn RAM cố định cấp cho VM. Đổi lại được môi trường tái lập, gỡ sạch dễ, và chuyển sang máy khác không phải dựng lại từ đầu.
+**Số đo thật, không phải ước tính.** Bản thiết kế trước viết rằng Colima "không bị phạt nặng" vì là VM arm64 không giả lập kiến trúc. **Điều đó sai.** Đo trên cùng một đoạn 17.2 giây audio, cùng model Nano 8 bước:
 
-**Vòng đời:** server chạy thường trực dưới `launchd`, nhưng **nạp model lười** — tiến trình lên ngay khi máy khởi động, còn trọng số chỉ được nạp ở request đầu tiên. Cách này cho RAM nhàn rỗi thấp mà vẫn không phải trả giá khởi động thật: lần nạp nguội đo được 5.0 giây, và nó trùng lặp với khoảng thời gian lô dịch đầu tiên đang chạy, nên người dùng không cảm thấy.
+| Môi trường | Thời gian suy luận | RTF | CPU cho 1 giờ bài giảng |
+|---|---|---|---|
+| Native, 2 luồng | 1.47s | **0.086** | ~5,2 phút |
+| Docker qua Colima, VM 2 CPU | 4.89s | **0.284** | ~17 phút |
 
-Quyết định: **M2 làm native**, kèm `Dockerfile` và `docker-compose.yml` trong repo cho ai cần. Với một server chạy loopback phục vụ đúng một người trên đúng máy này, tính tái lập của Docker chưa đổi được cho cái giá của nó. Mức phạt hiệu năng cụ thể của Colima đo được nếu cần — xem câu hỏi còn treo số 3.
+**Chậm hơn 3.3 lần.** Và số CPU không phải nguyên nhân: bản native bị giới hạn xuống đúng 2 luồng vẫn cho 0.086, tức tác vụ này gần như không hưởng lợi từ việc có thêm nhân. Nguyên nhân nhiều khả năng nằm ở chỗ khác — bản ONNX Runtime cho Linux arm64 trong container không với tới được các kernel tăng tốc của Apple mà bản macOS dùng được. Đây là giả thuyết hợp lý chứ chưa xác minh.
+
+**Hệ quả chấp nhận được.** RTF 0.284 vẫn thấp hơn 1.0 rất nhiều, nên cơ chế lookahead vẫn bám kịp video thoải mái. Cái giá thật là điện năng: TTS tốn gấp ba lần thời gian CPU, đáng để ý khi máy chạy pin. Nếu sau này thấy phiền thì chuyển sang native chỉ là đổi cách chạy cùng một `app.py`, extension không phải sửa gì.
+
+**Đã kiểm chứng khi dựng:**
+- `/health` trả về `model_loaded: false` trước request đầu tiên — nạp lười hoạt động đúng thiết kế.
+- Request đầu tiên tốn 7.72s tổng cộng, gồm cả việc nạp model. Các request sau còn 4.89s.
+- RAM container ở mức 639MB trên VM 2GiB — dư chỗ.
+- CORS nhận `chrome-extension://*`, từ chối origin khác bằng 400.
 
 ### 8.2 WASM — trạng thái thật
 
@@ -287,8 +301,7 @@ Bộ máy đồng bộ là nơi bug sẽ trú ngụ, và gần như toàn bộ n
 ## 13. Câu hỏi còn treo
 
 1. **Endpoint phụ đề của Udemy có dạng chính xác ra sao?** Cơ chế bắt request đã chốt; còn phải xác nhận URL, tên trường chứa caption, và liệu có khóa học nào chỉ dùng phụ đề nhúng trong HLS hay không. Đây là việc xác minh ở M1, không phải câu hỏi thiết kế.
-2. **Có cần đo mức phạt hiệu năng của Colima không?** Chỉ đáng làm nếu sau này thực sự muốn chạy server trong Docker thay vì native.
-3. **Spike WASM cho VieNeu có đáng làm sớm hơn v2 không?** Bốn bước xác minh nằm ở mục 8.2. Nếu chạy được thì bỏ hẳn được server — nhưng đó là công việc port, không phải cấu hình.
+2. **Spike WASM cho VieNeu có đáng làm sớm hơn v2 không?** Bốn bước xác minh nằm ở mục 8.2. Nếu chạy được thì bỏ hẳn được server — nhưng đó là công việc port, không phải cấu hình.
 
 ---
 

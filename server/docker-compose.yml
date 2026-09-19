@@ -1,0 +1,22 @@
+services:
+  tts:
+    build: .
+    image: udemy-dubbing-tts:latest
+    container_name: udemy-dubbing-tts
+    restart: unless-stopped
+
+    # Loopback only. The mixed-content exemption that lets the extension
+    # call plain HTTP from an HTTPS page applies to 127.0.0.1 and does
+    # not extend to a LAN address, so nothing outside this machine
+    # should be able to reach the server anyway.
+    ports:
+      - "127.0.0.1:8770:8770"
+
+    environment:
+      VIENEU_VOICE: "Minh Quân"
+      VIENEU_STEPS: "8"
+
+    volumes:
+      # Reuse the model already cached on the host rather than baking
+      # another 269MB into the image.
+      - ${HOME}/.cache/huggingface:/models
