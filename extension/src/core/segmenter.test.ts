@@ -49,6 +49,11 @@ describe('mergeCues', () => {
     expect(out).toHaveLength(1)
   })
 
+  it('không cắt khi cue kết thúc bằng chữ viết tắt', () => {
+    const out = mergeCues([cue(0, 1, 'this works for e.g.'), cue(1, 2, 'React and Vue.')])
+    expect(out).toHaveLength(1)
+  })
+
   it('trả mảng rỗng cho đầu vào rỗng', () => {
     expect(mergeCues([])).toEqual([])
   })
