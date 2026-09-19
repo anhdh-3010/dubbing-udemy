@@ -24,6 +24,7 @@ Khi mở bài giảng, extension lấy file phụ đề, gộp các cue thành c
 | Dịch | LLM API, người dùng tự cấp key (Gemini free tier) | Ngữ cảnh toàn bài thắng hẳn dịch máy từng câu với nội dung kỹ thuật; hạn mức miễn phí đủ cho một người |
 | Thuật ngữ IT | **Giữ nguyên tiếng Anh** trong bản dịch | Người học vốn đọc tài liệu bằng tiếng Anh; dịch thuật ngữ sang tiếng Việt làm câu khó hiểu hơn chứ không dễ hơn |
 | Giọng đọc | VieNeu v3 Nano, giọng **Minh Quân**, qua server HTTP cục bộ | Chất lượng tiếng Việt cao nhất mà vẫn miễn phí và chạy offline trên máy này; 11 giọng dựng sẵn; API tương thích OpenAI |
+| Số bước tổng hợp | **8 bước** | Nghe hay hơn 16 bước khi đánh giá bằng tai, và tốn đúng một nửa CPU |
 | Giọng dự phòng | Web Speech API (`Linh`) | Giữ extension dùng được khi server cục bộ không chạy |
 | Đóng gói server | Native + `launchd` mặc định; kèm `Dockerfile` để tái lập | Xem mục 8.1 |
 | Chiến lược đồng bộ | Co giãn thích ứng; không bao giờ dừng video | Dừng video làm bài giảng giật cục và kéo dài thời lượng |
@@ -197,7 +198,7 @@ Danh sách từ cần giữ nguyên nằm trong prompt chứ không phải một
 
 **Khả dụng:** scheduler dò server khi bắt đầu bài giảng và mỗi khi có lỗi. Khi không liên lạc được, extension rơi về `WebSpeechProvider` và **báo rõ trong bảng điều khiển** thay vì im lặng.
 
-**Ghi chú về lượng tử hóa:** bản int8 của VieNeu nhanh hơn ~1.6 lần nhưng đòi AVX-512 VNNI / AVX-VNNI — các tập lệnh x86 mà Apple Silicon không có, và tài liệu cảnh báo sẽ cho ra audio méo nếu thiếu. Trên máy này chỉ đường fp32 dùng được. Thay vào đó, tham số `steps` là núm điều chỉnh.
+**Ghi chú về lượng tử hóa:** bản int8 của VieNeu nhanh hơn ~1.6 lần nhưng đòi AVX-512 VNNI / AVX-VNNI — các tập lệnh x86 mà Apple Silicon không có, và tài liệu cảnh báo sẽ cho ra audio méo nếu thiếu. Trên máy này chỉ đường fp32 dùng được. Núm điều chỉnh thay thế là tham số `steps`, đã chốt ở **8**.
 
 ### 8.1 Đóng gói
 
@@ -206,6 +207,8 @@ Hai cách, cùng một interface HTTP nên đổi qua lại không ảnh hưởn
 **Native + `launchd` — mặc định.** Một venv Python và một file plist trong `~/Library/LaunchAgents`. Chạy thẳng trên CPU, không có tầng ảo hóa nào ở giữa, khởi động cùng máy.
 
 **Docker — tùy chọn, dành cho tái lập.** Máy này đã có Docker CLI 28.5.2 và Colima 0.9.1, nhưng daemon chưa chạy. Colima dựng một VM Linux arm64 nên không có giả lập kiến trúc và phần tính toán không bị phạt nặng, nhưng vẫn mất một phần hiệu năng cho tầng ảo hóa và tốn RAM cố định cấp cho VM. Đổi lại được môi trường tái lập, gỡ sạch dễ, và chuyển sang máy khác không phải dựng lại từ đầu.
+
+**Vòng đời:** server chạy thường trực dưới `launchd`, nhưng **nạp model lười** — tiến trình lên ngay khi máy khởi động, còn trọng số chỉ được nạp ở request đầu tiên. Cách này cho RAM nhàn rỗi thấp mà vẫn không phải trả giá khởi động thật: lần nạp nguội đo được 5.0 giây, và nó trùng lặp với khoảng thời gian lô dịch đầu tiên đang chạy, nên người dùng không cảm thấy.
 
 Quyết định: **M2 làm native**, kèm `Dockerfile` và `docker-compose.yml` trong repo cho ai cần. Với một server chạy loopback phục vụ đúng một người trên đúng máy này, tính tái lập của Docker chưa đổi được cho cái giá của nó. Mức phạt hiệu năng cụ thể của Colima đo được nếu cần — xem câu hỏi còn treo số 3.
 
@@ -265,10 +268,8 @@ Bộ máy đồng bộ là nơi bug sẽ trú ngụ, và gần như toàn bộ n
 
 ## 13. Câu hỏi còn treo
 
-1. **Tổng hợp 8 bước có nghe tệ hơn 16 bước không?** Nếu không thì dùng 8: RTF đo được giảm từ 0.18 xuống 0.094, tức CPU giảm một nửa — điều đáng kể khi máy chạy pin. Đang chờ đánh giá bằng tai.
-2. **Endpoint phụ đề của Udemy có dạng chính xác ra sao?** Cơ chế bắt request đã chốt; còn phải xác nhận URL, tên trường chứa caption, và liệu có khóa học nào chỉ dùng phụ đề nhúng trong HLS hay không. Xác nhận ở M1.
-3. **Có cần đo mức phạt hiệu năng của Colima không?** Chỉ đáng làm nếu bạn thực sự muốn chạy server trong Docker thay vì native.
-4. **Server nên chạy thường trực hay bật theo nhu cầu?** Thường trực thì đơn giản hơn và tốn RAM nhàn rỗi; bật theo nhu cầu thì tiết kiệm tài nguyên nhưng thêm độ trễ khởi động vào câu đầu tiên.
+1. **Endpoint phụ đề của Udemy có dạng chính xác ra sao?** Cơ chế bắt request đã chốt; còn phải xác nhận URL, tên trường chứa caption, và liệu có khóa học nào chỉ dùng phụ đề nhúng trong HLS hay không. Đây là việc xác minh ở M1, không phải câu hỏi thiết kế.
+2. **Có cần đo mức phạt hiệu năng của Colima không?** Chỉ đáng làm nếu sau này thực sự muốn chạy server trong Docker thay vì native.
 
 ---
 
@@ -282,9 +283,11 @@ Bộ máy đồng bộ là nơi bug sẽ trú ngụ, và gần như toàn bộ n
 | Apple `Linh` (compact) | không đo | — | Giọng tiếng Việt duy nhất mà Web Speech của Chrome lộ ra; đo được 5.56s so với 5.17s của bản Enhanced trên một câu ngắn hơn |
 | Piper `vais1000-medium` | 9.85s | 0.045 | Giọng tiếng Việt chính thức tốt nhất của Piper; khoảng 1.000 câu huấn luyện |
 | `CSA v3` định dạng Piper | 9.53s | 0.061 | 257 giờ dữ liệu tổng hợp, 5 giọng — ứng viên cho `WasmProvider` ở v2 |
-| **VieNeu v3 Nano, 16 bước** | **10.67s** | **0.18** | 24 kHz, 11 giọng dựng sẵn — **đã chọn** |
-| VieNeu v3 Nano, 8 bước | 10.69s | 0.094 | Chênh lệch chất lượng đang được đánh giá |
+| VieNeu v3 Nano, 16 bước | 10.67s | 0.188 | 24 kHz, 11 giọng dựng sẵn |
+| **VieNeu v3 Nano, 8 bước** | **10.69s** | **0.094** | **Đã chọn** — nghe hay hơn 16 bước, CPU bằng một nửa |
 
-Nạp model lần đầu kèm tải về: 56.7s. Nạp khi đã có sẵn: khoảng 3s theo tài liệu gốc.
+Nạp model lần đầu kèm tải về: 56.7s. Nạp nguội khi model đã có sẵn trên đĩa: **5.0s** đo được.
+
+Trên một đoạn dài hơn (17.2 giây audio), 16 bước tốn 3.23s suy luận còn 8 bước tốn 1.61s. Quy ra một giờ bài giảng: CPU làm việc khoảng 11 phút so với 5,6 phút.
 
 Để tham chiếu, giọng Apple đọc cùng đoạn đó **chậm hơn VieNeu 25%**, và điều này trực tiếp làm tăng tần suất các tầng nén ở mục 6.2 phải can thiệp.
