@@ -33,7 +33,7 @@ Khi mở bài giảng, extension lấy file phụ đề, gộp các cue thành c
 
 ### Nằm ngoài phạm vi v1
 
-Đóng gói lên Chrome Web Store, luồng onboarding, privacy policy, hỗ trợ đa trình duyệt, các nhà cung cấp TTS đám mây, giao diện quản lý glossary, nhân bản giọng, provider chạy WASM (xem mục 8.2).
+Đóng gói lên Chrome Web Store, luồng onboarding, privacy policy, hỗ trợ đa trình duyệt, các nhà cung cấp TTS đám mây, giao diện quản lý glossary, nhân bản giọng, provider chạy WASM — xem mục 8.2, đây là spike của v2 chứ không phải bị loại.
 
 ## 4. Kiến trúc
 
@@ -212,13 +212,26 @@ Hai cách, cùng một interface HTTP nên đổi qua lại không ảnh hưởn
 
 Quyết định: **M2 làm native**, kèm `Dockerfile` và `docker-compose.yml` trong repo cho ai cần. Với một server chạy loopback phục vụ đúng một người trên đúng máy này, tính tái lập của Docker chưa đổi được cho cái giá của nó. Mức phạt hiệu năng cụ thể của Colima đo được nếu cần — xem câu hỏi còn treo số 3.
 
-### 8.2 WASM — vì sao không dùng cho VieNeu
+### 8.2 WASM — trạng thái thật
 
-VieNeu Nano gồm ba đồ thị ONNX tổng cộng 269MB (`vector_estimator` 148MB, `codec_decoder` 95MB, `text_encoder` 25MB), cộng phonemizer `sea-g2p` hiện chưa có bản chạy trong trình duyệt. Quan trọng hơn, kiến trúc flow-matching chạy 8–16 lượt suy luận cho mỗi câu, nên mức phạt hiệu năng của WASM bị nhân lên đúng ngần ấy lần. Không khả thi.
+Bản thiết kế đầu loại WASM với lý do sai, cần đính chính lại cho rõ.
 
-Con đường WASM thực tế là quay về model định dạng Piper — cụ thể `CSA v3` (74MB, RTF 0.061 đo trong lúc thiết kế). Nó thấp hơn VieNeu một bậc về chất lượng nhưng nằm gọn trong extension và không cần server nào cả.
+Lý do cũ là kiến trúc flow-matching chạy 8–16 lượt suy luận mỗi câu nên mức phạt của WASM bị nhân lên. Nhưng sau khi chốt 8 bước, RTF đo được là **0.094**. Kể cả khi WASM chậm hơn 6 lần, con số đó mới lên ~0.56 — vẫn dưới 1.0. **Tốc độ không phải thứ chặn.**
 
-Vì `TTSProvider` vốn đã là một interface, thêm `WasmProvider` sau này không phải đụng vào phần lõi. Đề xuất: **để dành cho v2**, và khi làm thì cho nó thay chỗ `WebSpeechProvider` trong chuỗi dự phòng — thành VieNeu → CSA v3 (WASM) → Web Speech. Không đưa vào v1 vì nó thêm 74MB cùng một đường mã nữa phải bảo trì, trong khi dự phòng chỉ dùng tới lúc server chết.
+Lý do thứ hai là phonemizer `sea-g2p` không có bản trình duyệt. Đúng về hiện trạng — npm không có gói nào — nhưng `sea-g2p` **viết bằng Rust** (83.5%, Apache-2.0), và Rust sang `wasm32` là đường đã trải sẵn với `wasm-pack`. Đây có lẽ là phần dễ port nhất trong cả stack chứ không phải bức tường.
+
+Thứ còn lại là thật: **269MB trọng số ONNX** phải tải một lần, cache vào OPFS hoặc IndexedDB, rồi giữ trong bộ nhớ của tab. Nằm trong giới hạn của `onnxruntime-web` nhưng là cái giá nặng cho một tab trình duyệt.
+
+Kết luận đã sửa: **VieNeu chạy WASM nhiều khả năng khả thi, chỉ là chưa ai làm.** Nó là một dự án port thực thụ, không phải việc cắm thư viện có sẵn.
+
+**Quyết định:** không làm ở v1. Server native chạy được ngay hôm nay và cho bạn extension dùng được sớm. Đưa WASM thành một spike riêng ở v2, với danh sách cần xác minh trước khi cam kết:
+
+1. `sea-g2p` có biên dịch sang `wasm32-unknown-unknown` không — vướng mắc hay gặp là `std::fs` để nạp từ điển, và `rayon` nếu nó dùng đa luồng.
+2. Ba đồ thị ONNX có nạp được trong `onnxruntime-web` không — kiểm tra opset và các toán tử ít gặp.
+3. Trần bộ nhớ thực tế khi giữ 269MB trọng số trong offscreen document.
+4. RTF đo thật trong trình duyệt, không phải ước tính.
+
+Nếu spike đó thành công thì `WasmProvider` xoá luôn nhu cầu server, và `TTSProvider` đã sẵn interface để cắm vào mà không đụng phần lõi. Nếu thất bại ở bước 1 hoặc 3, đường lùi vẫn là model định dạng Piper `CSA v3` (74MB, RTF 0.061) — thấp hơn một bậc về chất lượng nhưng chắc chắn chạy được.
 
 ## 9. Cache
 
@@ -270,6 +283,7 @@ Bộ máy đồng bộ là nơi bug sẽ trú ngụ, và gần như toàn bộ n
 
 1. **Endpoint phụ đề của Udemy có dạng chính xác ra sao?** Cơ chế bắt request đã chốt; còn phải xác nhận URL, tên trường chứa caption, và liệu có khóa học nào chỉ dùng phụ đề nhúng trong HLS hay không. Đây là việc xác minh ở M1, không phải câu hỏi thiết kế.
 2. **Có cần đo mức phạt hiệu năng của Colima không?** Chỉ đáng làm nếu sau này thực sự muốn chạy server trong Docker thay vì native.
+3. **Spike WASM cho VieNeu có đáng làm sớm hơn v2 không?** Bốn bước xác minh nằm ở mục 8.2. Nếu chạy được thì bỏ hẳn được server — nhưng đó là công việc port, không phải cấu hình.
 
 ---
 
