@@ -8,7 +8,7 @@
     "build": "wxt build",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test",
+    "test:e2e": "wxt build --mode e2e && playwright test",
     "typecheck": "tsc --noEmit",
     "postinstall": "wxt prepare"
   },

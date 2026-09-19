@@ -2,7 +2,7 @@
 <meta charset="utf-8" />
 <title>Fixture lecture</title>
 <video id="v" width="480" controls>
-  <track kind="captions" src="./sample.vtt" srclang="en" default />
+  <track kind="captions" src="/sample.vtt" srclang="en" default />
 </video>
 <script>
   // Mimics Udemy fetching its own caption file over plain fetch(), which is
@@ -11,5 +11,11 @@
   // isCaptionUrlAllowed correctly rejects (wrong scheme, wrong host), so this
   // exercises the native <track> fallback path rather than the VTT-fetch
   // path — see tests/e2e/dubbing.spec.ts for the full trace.
-  fetch('./sample.vtt').then((r) => r.text())
+  //
+  // Both this page and the <track> above reference /sample.vtt with an
+  // absolute path rather than "./sample.vtt": this same file is also served
+  // at /learn/lecture/12345 (see scripts/serve-fixtures.mjs) so the test can
+  // exercise player-bridge.ts's lecture-id bookkeeping, and a relative path
+  // would resolve differently — and wrongly — under that URL.
+  fetch('/sample.vtt').then((r) => r.text())
 </script>
