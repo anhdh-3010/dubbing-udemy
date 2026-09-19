@@ -13,8 +13,8 @@ interface FakeCue {
   text: string
 }
 
-function fakeTrack(kind: string, cues: FakeCue[], language = '') {
-  return { kind, mode: 'disabled', cues, language }
+function fakeTrack(kind: string, cues: FakeCue[], language = '', label = '') {
+  return { kind, mode: 'disabled', cues, language, label }
 }
 
 function videoWithTracks(...tracks: ReturnType<typeof fakeTrack>[]): HTMLVideoElement {
@@ -106,11 +106,27 @@ describe('cuesFromTextTracksWhenReady', () => {
     }
   })
 
-  it('hết hạn thì trả về bất kỳ cue nào đang có, kể cả không phải tiếng Anh', async () => {
+  it('trả cue ngay nếu chỉ có một track không gắn nhãn ngôn ngữ, không cần chờ', async () => {
+    // No English track exists at all here, so nothing should hold this up
+    // waiting for one — the fix for the latency this poll used to add to
+    // the single-track case.
+    const untagged = fakeTrack('captions', [{ startTime: 0, endTime: 2, text: 'hello' }])
+    const video = videoWithTracks(untagged)
+
+    const cues = await cuesFromTextTracksWhenReady(video)
+
+    expect(cues).toEqual([{ start: 0, end: 2, text: 'hello' }])
+  })
+
+  it('hết hạn thì trả về bất kỳ cue nào đang có, kể cả không phải tiếng Anh, nếu track tiếng Anh không bao giờ có cue', async () => {
     vi.useFakeTimers()
     try {
+      // An English track exists (so the poll keeps requiring it) but never
+      // produces cues; Spanish has cues from the start. Only once the
+      // deadline passes should Spanish be accepted.
       const spanish = fakeTrack('captions', [{ startTime: 0, endTime: 2, text: 'hola' }], 'es')
-      const video = videoWithTracks(spanish)
+      const english = fakeTrack('captions', [], 'en')
+      const video = videoWithTracks(spanish, english)
 
       const promise = cuesFromTextTracksWhenReady(video, { intervalMs: 100, deadlineMs: 300 })
       await vi.advanceTimersByTimeAsync(300)
@@ -169,6 +185,45 @@ describe('cuesFromTextTracksWhenReady', () => {
       })
       aborted = true
       await vi.advanceTimersByTimeAsync(100)
+
+      expect(await promise).toEqual([])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // F1: without a stricter `accept`, a <video> element whose tracks still
+  // carry a *previous* lecture's cues (Udemy can reuse the same element
+  // across lectures) gets those handed back immediately, as if they were
+  // the new lecture's. This is the defect content.ts's lectureChanged path
+  // must not hit — the next test shows the `accept` option closing it.
+  it('không có accept tuỳ chỉnh thì lấy ngay cue đang có trên track, kể cả khi đó là cue còn sót lại từ bài trước', async () => {
+    const stale = fakeTrack('captions', [{ startTime: 0, endTime: 2, text: 'lecture A line' }], 'en')
+    const video = videoWithTracks(stale)
+
+    const cues = await cuesFromTextTracksWhenReady(video)
+
+    expect(cues).toEqual([{ start: 0, end: 2, text: 'lecture A line' }])
+  })
+
+  it('accept từ chối chữ ký cue cũ thì không dùng nhầm cue của bài trước, và hết hạn thì trả rỗng', async () => {
+    vi.useFakeTimers()
+    try {
+      const stale = fakeTrack('captions', [{ startTime: 0, endTime: 2, text: 'lecture A line' }], 'en')
+      const video = videoWithTracks(stale)
+      const staleSignature = '1|lecture A line|lecture A line'
+      const signatureOf = (cues: { text: string }[]) =>
+        cues.length === 0 ? '' : `${cues.length}|${cues[0].text}|${cues[cues.length - 1].text}`
+
+      // The track never actually changes in this test (there is no lecture
+      // B content to load yet), so the only correct outcome is giving up
+      // empty-handed rather than handing back lecture A's leftover cues.
+      const promise = cuesFromTextTracksWhenReady(video, {
+        deadlineMs: 300,
+        intervalMs: 100,
+        accept: (cues) => cues.length > 0 && signatureOf(cues) !== staleSignature,
+      })
+      await vi.advanceTimersByTimeAsync(300)
 
       expect(await promise).toEqual([])
     } finally {

@@ -174,4 +174,48 @@ describe('WebSpeechProvider', () => {
     const u = await new WebSpeechProvider().prepare('xin chào', new AbortController().signal)
     expect(u.duration).toBeGreaterThan(0)
   })
+
+  it('chờ voiceschanged nếu getVoices() rỗng lúc đầu, rồi nhận ra giọng tiếng Việt', async () => {
+    let voices: { lang: string; name: string; default: boolean }[] = []
+    const listeners: Record<string, (() => void)[]> = {}
+    vi.stubGlobal('speechSynthesis', {
+      speak: vi.fn(),
+      cancel: vi.fn(),
+      getVoices: () => voices,
+      addEventListener: (type: string, cb: () => void) => {
+        ;(listeners[type] ??= []).push(cb)
+      },
+      removeEventListener: (type: string, cb: () => void) => {
+        listeners[type] = (listeners[type] ?? []).filter((l) => l !== cb)
+      },
+    })
+
+    const promise = new WebSpeechProvider().isAvailable()
+    // The voice list "loads" only after isAvailable() has already started
+    // waiting — this is exactly the Chrome-after-page-load gap.
+    voices = [{ lang: 'vi-VN', name: 'Linh', default: true }]
+    listeners['voiceschanged']?.forEach((cb) => cb())
+
+    expect(await promise).toBe(true)
+  })
+
+  it('hết thời gian chờ mà voiceschanged không tới thì vẫn kết luận theo getVoices() hiện có', async () => {
+    vi.useFakeTimers()
+    try {
+      vi.stubGlobal('speechSynthesis', {
+        speak: vi.fn(),
+        cancel: vi.fn(),
+        getVoices: () => [] as { lang: string; name: string; default: boolean }[],
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      })
+
+      const promise = new WebSpeechProvider().isAvailable()
+      await vi.advanceTimersByTimeAsync(2000)
+
+      expect(await promise).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

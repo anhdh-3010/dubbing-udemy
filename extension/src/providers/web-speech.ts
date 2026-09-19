@@ -23,7 +23,27 @@ export class WebSpeechProvider implements TTSProvider {
 
   async isAvailable(): Promise<boolean> {
     if (typeof speechSynthesis === 'undefined') return false
+    if (this.voice() !== undefined) return true
+    // Chrome returns [] from getVoices() until the voice list finishes
+    // loading asynchronously after a page load. Without waiting once here,
+    // the first attach on a fresh page can wrongly report "no Vietnamese
+    // voice" on a machine that has one.
+    if (speechSynthesis.getVoices().length === 0) await this.waitForVoices()
     return this.voice() !== undefined
+  }
+
+  /** Resolves once `voiceschanged` fires, or after `timeoutMs` if it never
+   *  does (some engines never fire it at all). */
+  private waitForVoices(timeoutMs = 1500): Promise<void> {
+    return new Promise((resolve) => {
+      const done = () => {
+        speechSynthesis.removeEventListener('voiceschanged', done)
+        clearTimeout(timer)
+        resolve()
+      }
+      const timer = setTimeout(done, timeoutMs)
+      speechSynthesis.addEventListener('voiceschanged', done)
+    })
   }
 
   private voice(): SpeechSynthesisVoice | undefined {
