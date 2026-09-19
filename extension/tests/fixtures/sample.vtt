@@ -1,0 +1,10 @@
+WEBVTT
+
+00:00:01.000 --> 00:00:03.000
+In this lesson we will build
+
+00:00:03.000 --> 00:00:05.000
+a React component.
+
+00:00:06.000 --> 00:00:09.000
+Then we call the API with FastAPI.

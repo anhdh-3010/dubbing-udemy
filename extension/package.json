@@ -8,6 +8,7 @@
     "build": "wxt build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test",
     "typecheck": "tsc --noEmit",
     "postinstall": "wxt prepare"
   },
@@ -16,6 +17,7 @@
   "license": "ISC",
   "description": "",
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/chrome": "^0.2.9",
     "@types/node": "^26.6.2",
     "jsdom": "^26.1.0",

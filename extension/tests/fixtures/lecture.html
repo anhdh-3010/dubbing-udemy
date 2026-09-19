@@ -1,0 +1,15 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Fixture lecture</title>
+<video id="v" width="480" controls>
+  <track kind="captions" src="./sample.vtt" srclang="en" default />
+</video>
+<script>
+  // Mimics Udemy fetching its own caption file over plain fetch(), which is
+  // what the MAIN-world hook (caption-hook.content.ts) listens for. On this
+  // fixture the resolved URL is http://127.0.0.1:5599/sample.vtt, which
+  // isCaptionUrlAllowed correctly rejects (wrong scheme, wrong host), so this
+  // exercises the native <track> fallback path rather than the VTT-fetch
+  // path — see tests/e2e/dubbing.spec.ts for the full trace.
+  fetch('./sample.vtt').then((r) => r.text())
+</script>

@@ -16,7 +16,13 @@ const cueSignature = (cues: Cue[]): string =>
   cues.length === 0 ? '' : `${cues.length}|${cues[0].text}|${cues[cues.length - 1].text}`
 
 export default defineContentScript({
-  matches: ['https://www.udemy.com/*'],
+  matches: [
+    'https://www.udemy.com/*',
+    // The e2e fixture origin (tests/e2e/dubbing.spec.ts), served locally by
+    // the Playwright webServer so the pipeline can be exercised end to end
+    // without a real Udemy account.
+    'http://127.0.0.1:5599/*',
+  ],
   runAt: 'document_idle',
 
   main() {
