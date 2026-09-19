@@ -9,12 +9,22 @@ const status = document.querySelector<HTMLDivElement>('#status')!
 
 // storage.local, never storage.sync: secrets should not ride along to other
 // machines on the user's Google account.
-void chrome.storage.local.get('apiKey').then(({ apiKey }) => {
-  if (typeof apiKey === 'string') input.value = apiKey
-})
+void chrome.storage.local
+  .get('apiKey')
+  .then(({ apiKey }) => {
+    if (typeof apiKey === 'string') input.value = apiKey
+  })
+  .catch(() => {
+    status.textContent = 'Không đọc được key đã lưu.'
+  })
 
 button.addEventListener('click', async () => {
-  await chrome.storage.local.set({ apiKey: input.value.trim() })
-  status.textContent = 'Đã lưu.'
+  const key = input.value.trim()
+  await chrome.storage.local.set({ apiKey: key })
+  status.textContent = key === '' ? 'Đã xoá key.' : 'Đã lưu.'
   setTimeout(() => (status.textContent = ''), 2000)
+})
+
+input.addEventListener('keydown', (event) => {
+  if (event.key === 'Enter') button.click()
 })
