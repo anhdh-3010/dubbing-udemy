@@ -63,4 +63,38 @@ describe('createPlayerBridge', () => {
     expect(onRate).toHaveBeenCalledWith(1.5)
     bridge.stop()
   })
+
+  it('đổi video thì báo detached rồi attached với phần tử mới', async () => {
+    const events: string[] = []
+    const first = document.createElement('video')
+    document.body.appendChild(first)
+
+    const bridge = createPlayerBridge(document)
+    bridge.on('detached', () => events.push('detached'))
+    bridge.on('attached', () => events.push('attached'))
+    bridge.start()
+    await vi.waitFor(() => expect(bridge.video).toBe(first))
+
+    const second = document.createElement('video')
+    first.replaceWith(second)
+
+    await vi.waitFor(() => expect(bridge.video).toBe(second))
+    expect(events).toEqual(['attached', 'detached', 'attached'])
+    bridge.stop()
+  })
+
+  it('stop thì nhả video và báo detached', async () => {
+    const onDetached = vi.fn()
+    const video = document.createElement('video')
+    document.body.appendChild(video)
+
+    const bridge = createPlayerBridge(document)
+    bridge.on('detached', onDetached)
+    bridge.start()
+    await vi.waitFor(() => expect(bridge.video).toBe(video))
+
+    bridge.stop()
+    expect(onDetached).toHaveBeenCalled()
+    expect(bridge.video).toBeNull()
+  })
 })

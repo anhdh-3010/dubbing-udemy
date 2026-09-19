@@ -79,6 +79,7 @@ export function createPlayerBridge(doc: Document): PlayerBridge {
       ;(handlers[event] ??= [] as never).push(fn as never)
     },
     start() {
+      observer?.disconnect()
       observer = new MutationObserver(scan)
       observer.observe(doc.documentElement, { childList: true, subtree: true })
       scan()
