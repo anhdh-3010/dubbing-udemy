@@ -40,4 +40,22 @@ describe('matchTranslations', () => {
     expect(r.matched.size).toBe(0)
     expect(r.missing).toEqual([1, 2])
   })
+
+  it('bóc JSON trong hàng rào ngay cả khi có văn xuôi chứa dấu ngoặc ở trước', () => {
+    const raw = 'Đây là kết quả [xem] bên dưới:\n```json\n[{"id":1,"vi":"một"},{"id":2,"vi":"hai"}]\n```'
+    expect(matchTranslations(batch, raw).matched.size).toBe(2)
+  })
+
+  it('không ném lỗi khi có dấu ngoặc nhưng nội dung bên trong không phải JSON', () => {
+    const r = matchTranslations(batch, 'not [valid json] here')
+    expect(r.matched.size).toBe(0)
+    expect(r.missing).toEqual([1, 2])
+  })
+
+  it('bỏ qua phần tử dị dạng và vẫn lấy được phần hợp lệ', () => {
+    const r = matchTranslations(batch, '[1, "two", null, {"id":"1","vi":"x"}, {"id":2,"vi":"hai"}]')
+    expect(r.matched.get(2)).toBe('hai')
+    expect(r.matched.size).toBe(1)
+    expect(r.missing).toEqual([1])
+  })
 })

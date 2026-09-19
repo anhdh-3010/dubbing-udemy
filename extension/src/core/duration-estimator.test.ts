@@ -34,4 +34,10 @@ describe('DurationEstimator', () => {
     for (let i = 0; i < 50; i++) e.observe('x'.repeat(100), 0.01)
     expect(e.charsPerSecond).toBeLessThanOrEqual(40)
   })
+
+  it('giữ hệ số không tụt xuống dưới sàn', () => {
+    const e = new DurationEstimator(15)
+    for (let i = 0; i < 50; i++) e.observe('x'.repeat(10), 100) // thực tế 0.1 ch/s
+    expect(e.charsPerSecond).toBe(5)
+  })
 })

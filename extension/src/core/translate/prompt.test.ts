@@ -34,4 +34,12 @@ describe('buildPrompt', () => {
     const p = buildPrompt(batch)
     expect(p).toContain('JSON')
   })
+
+  it('nêu rõ chỉ thị giữ thuật ngữ IT, không chỉ nhắc chữ English', () => {
+    expect(buildPrompt(batch)).toContain('Keep IT terminology in English')
+  })
+
+  it('cấm mô hình gộp hoặc bỏ sót câu', () => {
+    expect(buildPrompt(batch)).toContain('Never merge or drop entries')
+  })
 })
