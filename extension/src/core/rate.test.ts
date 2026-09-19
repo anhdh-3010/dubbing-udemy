@@ -65,4 +65,31 @@ describe('computeStretch', () => {
     expect(Number.isFinite(plan.ttsRate)).toBe(true)
     expect(Number.isFinite(plan.videoRate)).toBe(true)
   })
+
+  it('ngân sách thời gian thực co lại theo baseline, không phải theo khung video', () => {
+    const plan = computeStretch({
+      segmentStart: 0, segmentEnd: 8, gapAfter: 0, duration: 5, baseline: 2,
+    })
+    // haveWall = 8/2 = 4 giây thực, nên 5 giây đọc phải nhanh lên 1.25 lần.
+    // Nếu bỏ phép chia cho baseline, haveWall = 8 và ttsRate bị kẹp về 1.0.
+    expect(plan.ttsRate).toBeCloseTo(1.25)
+  })
+
+  it('làm chậm video khi ngân sách đã co theo baseline không còn đủ', () => {
+    const plan = computeStretch({
+      segmentStart: 0, segmentEnd: 8, gapAfter: 0, duration: 8, baseline: 2,
+    })
+    // haveWall = 4; ttsRate kẹp ở 1.4; needWall = 5.71 > 4 nên phải chạm sàn 0.85*2.
+    // Nếu bỏ phép chia cho baseline, haveWall = 8, không cần chậm, videoRate = 2.
+    expect(plan.ttsRate).toBeCloseTo(1.4)
+    expect(plan.videoRate).toBeCloseTo(1.7)
+  })
+
+  it('khung thời gian bằng 0 thì không làm chậm video', () => {
+    const plan = computeStretch({
+      segmentStart: 3, segmentEnd: 3, gapAfter: 0, duration: 2, baseline: 1,
+    })
+    // Không có guard thì videoRate rơi xuống sàn 0.85 dù chẳng có gì để đọc vừa.
+    expect(plan.videoRate).toBe(1)
+  })
 })
