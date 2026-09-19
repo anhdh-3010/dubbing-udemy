@@ -42,17 +42,34 @@ export async function translateBatch(
 ): Promise<Map<number, string>> {
   const result = new Map<number, string>()
   let remaining = batch
+  let lastError: unknown = null
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS && remaining.length > 0; attempt++) {
     if (attempt > 0) await new Promise((r) => setTimeout(r, 500 * attempt))
 
-    const raw = await callOnce(buildPrompt(remaining), apiKey, fetchImpl)
+    let raw: string
+    try {
+      raw = await callOnce(buildPrompt(remaining), apiKey, fetchImpl)
+    } catch (e) {
+      // A rejected key is final. A rate limit or a 5xx is exactly what the
+      // retry loop is for, and whatever earlier attempts already translated
+      // stays in `result`.
+      if (e instanceof InvalidApiKeyError) throw e
+      lastError = e
+      continue
+    }
+
     const { matched, missing } = matchTranslations(remaining, raw)
     for (const [id, vi] of matched) result.set(id, vi)
 
     const missingSet = new Set(missing)
     remaining = remaining.filter((s) => missingSet.has(s.id))
   }
+
+  // Partial success resolves — the caller keeps the segments we did get.
+  // A total failure still surfaces its cause rather than looking like an
+  // empty translation.
+  if (result.size === 0 && lastError !== null) throw lastError
 
   return result
 }

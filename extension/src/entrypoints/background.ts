@@ -17,18 +17,24 @@ type Request = TranslateRequest | FetchCaptionRequest
 export default defineBackground(() => {
   chrome.runtime.onMessage.addListener((msg: Request, _sender, sendResponse) => {
     if (msg.type === 'translate') {
-      chrome.storage.local.get('apiKey').then(async ({ apiKey }) => {
-        if (typeof apiKey !== 'string' || apiKey === '') {
-          sendResponse({ error: 'Chưa có API key. Mở trang cài đặt để nhập.' })
-          return
-        }
-        try {
-          const map = await translateBatch(msg.batch, apiKey)
-          sendResponse({ translations: Array.from(map.entries()) })
-        } catch (e) {
-          sendResponse({ error: e instanceof Error ? e.message : String(e) })
-        }
-      })
+      chrome.storage.local
+        .get('apiKey')
+        .then(async ({ apiKey }) => {
+          if (typeof apiKey !== 'string' || apiKey === '') {
+            sendResponse({ error: 'Chưa có API key. Mở trang cài đặt để nhập.' })
+            return
+          }
+          try {
+            const map = await translateBatch(msg.batch, apiKey)
+            sendResponse({ translations: Array.from(map.entries()) })
+          } catch (e) {
+            sendResponse({ error: e instanceof Error ? e.message : String(e) })
+          }
+        })
+        // If reading storage itself fails, the `.then` above never runs, so
+        // `sendResponse` would otherwise never be called and the caller's
+        // `sendMessage` would hang until the message port closes.
+        .catch((e) => sendResponse({ error: e instanceof Error ? e.message : String(e) }))
       return true
     }
 
@@ -42,12 +48,11 @@ export default defineBackground(() => {
       // allowed host would walk this credentialed request straight off the
       // allowlist.
       try {
-        // `fetch()` (via the `Request` constructor) can itself throw
-        // synchronously — e.g. `https://evil.com@www.udemy.com/x.vtt` parses
-        // to an allowed host and pathname and so passes the predicate above,
-        // but the Fetch spec requires a TypeError for a URL carrying
-        // embedded credentials. Catch that here so it can never escape the
-        // listener callback and leave the caller's `sendMessage` hanging.
+        // `fetch()` never throws synchronously — the Fetch spec converts a
+        // Request constructor error (e.g. from a URL carrying embedded
+        // credentials, such as `https://evil.com@www.udemy.com/x.vtt`) into
+        // a rejection, which the `.catch` below handles. This wrapper only
+        // guarantees the listener callback cannot throw before `return true`.
         fetch(msg.url, { credentials: 'include', redirect: 'error' })
           .then((r) => r.text())
           .then((text) => sendResponse({ text }))

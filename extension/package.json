@@ -8,6 +8,7 @@
     "build": "wxt build",
     "test": "vitest run",
     "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
     "postinstall": "wxt prepare"
   },
   "keywords": [],
@@ -15,6 +16,7 @@
   "license": "ISC",
   "description": "",
   "devDependencies": {
+    "@types/chrome": "^0.2.9",
     "@types/node": "^26.6.2",
     "jsdom": "^26.1.0",
     "typescript": "^7.0.2",

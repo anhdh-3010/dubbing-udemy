@@ -19,7 +19,7 @@ describe('translateBatch', () => {
   it('gửi key trong header chứ không trong URL', async () => {
     const f = vi.fn(async () => reply('[{"id":1,"vi":"xin chào"}]'))
     await translateBatch(batch, 'SECRET', f as unknown as typeof fetch)
-    const [url, init] = f.mock.calls[0] as [string, RequestInit]
+    const [url, init] = f.mock.calls[0] as unknown as [string, RequestInit]
     expect(url).not.toContain('SECRET')
     expect((init.headers as Record<string, string>)['x-goog-api-key']).toBe('SECRET')
   })
@@ -44,5 +44,27 @@ describe('translateBatch', () => {
     const f = vi.fn(async () => new Response('forbidden', { status: 401 }))
     await expect(translateBatch(batch, 'BAD', f as unknown as typeof fetch)).rejects.toThrow(/key/i)
     expect(f).toHaveBeenCalledTimes(1)
+  })
+
+  it('thử lại khi bị giới hạn tần suất rồi thành công', async () => {
+    const f = vi.fn()
+      .mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
+      .mockResolvedValueOnce(reply('[{"id":1,"vi":"xin chào"}]'))
+    const out = await translateBatch(batch, 'KEY', f as unknown as typeof fetch)
+    expect(f).toHaveBeenCalledTimes(2)
+    expect(out.get(1)).toBe('xin chào')
+  })
+
+  it('giữ lại phần đã dịch được khi lần sau bị giới hạn tần suất', async () => {
+    const two: Segment[] = [
+      { id: 1, start: 0, end: 2, srcText: 'a', status: 'pending' },
+      { id: 2, start: 2, end: 4, srcText: 'b', status: 'pending' },
+    ]
+    const f = vi.fn()
+      .mockResolvedValueOnce(reply('[{"id":1,"vi":"một"}]'))
+      .mockResolvedValue(new Response('rate limited', { status: 429 }))
+    const out = await translateBatch(two, 'KEY', f as unknown as typeof fetch)
+    expect(out.get(1)).toBe('một')
+    expect(out.has(2)).toBe(false)
   })
 })

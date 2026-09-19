@@ -1,0 +1,73 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { FetchCaptionRequest, TranslateRequest } from '../background'
+
+type Message = TranslateRequest | FetchCaptionRequest
+type SendResponse = (response: unknown) => void
+type Listener = (msg: Message, sender: unknown, sendResponse: SendResponse) => boolean | void
+
+/**
+ * `defineBackground` is normally a WXT auto-import (`wxt/utils/define-background`)
+ * that the extension's generated bootstrap calls later — there is no such loader
+ * in this test. The real implementation just wraps its argument as `{ main: fn }`
+ * (see `node_modules/wxt/dist/utils/define-background.mjs`), which is exactly the
+ * `BackgroundDefinition` shape `background.ts`'s default export is typed as. The
+ * stub mirrors that instead of shortcutting past it, so the test drives the same
+ * `.main()` seam the real extension does, and stays type-correct without casts.
+ */
+function stubDefineBackground(): void {
+  vi.stubGlobal('defineBackground', (main: () => void) => ({ main }))
+}
+
+describe('background: fetch-caption security gate', () => {
+  let listener: Listener
+  let fetchMock: ReturnType<typeof vi.fn>
+
+  beforeEach(async () => {
+    vi.resetModules()
+    stubDefineBackground()
+
+    const addListener = vi.fn((l: Listener) => {
+      listener = l
+    })
+    vi.stubGlobal('chrome', {
+      runtime: { onMessage: { addListener } },
+      storage: { local: { get: vi.fn(async () => ({})) } },
+    })
+
+    fetchMock = vi.fn(async () => new Response('irrelevant'))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const mod = await import('../background')
+    mod.default.main()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  function sendFetchCaption(url: string): Promise<unknown> {
+    return new Promise((resolve) => {
+      listener({ type: 'fetch-caption', url }, {}, resolve)
+    })
+  }
+
+  it('từ chối host lạ và không gọi fetch', async () => {
+    const res = await sendFetchCaption('https://evil.com/x.vtt')
+    expect(res).toMatchObject({ error: expect.any(String) })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('từ chối localhost và không gọi fetch', async () => {
+    const res = await sendFetchCaption('http://127.0.0.1:8000/x.vtt')
+    expect(res).toMatchObject({ error: expect.any(String) })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('URL phụ đề hợp lệ thì gọi fetch kèm credentials và redirect error', async () => {
+    await sendFetchCaption('https://x.udemycdn.com/c/en.vtt')
+    expect(fetchMock).toHaveBeenCalledWith(
+      'https://x.udemycdn.com/c/en.vtt',
+      expect.objectContaining({ credentials: 'include', redirect: 'error' }),
+    )
+  })
+})
