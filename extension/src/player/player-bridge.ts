@@ -36,7 +36,16 @@ export function createPlayerBridge(doc: Document): PlayerBridge {
     event: K,
     ...args: Parameters<PlayerBridgeEvents[K]>
   ) => {
-    for (const fn of handlers[event] ?? []) (fn as (...a: unknown[]) => void)(...args)
+    for (const fn of handlers[event] ?? []) {
+      try {
+        ;(fn as (...a: unknown[]) => void)(...args)
+      } catch (e) {
+        // A handler that throws must not unwind out of the bridge: start()
+        // calls scan() synchronously, so an uncaught throw here would leave
+        // the MutationObserver connected but the caller's start() aborted.
+        console.error('[player-bridge] handler threw', e)
+      }
+    }
   }
 
   const onSeeked = () => emit('seeked')

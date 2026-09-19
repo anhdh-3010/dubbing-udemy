@@ -52,11 +52,12 @@ export class Scheduler {
     this.baseline = rate > 0 ? rate : 1
   }
 
-  /** True when `rate` is one this scheduler wrote itself. A driver that
-   *  forwards ratechange events uses this to avoid latching a stretched rate
-   *  as the speed the viewer chose. */
+  /** True when `rate` is one this scheduler wrote itself, consumed on match:
+   *  each write produces at most one ratechange, so a claim is good once. */
   isOwnRate(rate: number): boolean {
-    return this.lastWrittenRate !== null && rate === this.lastWrittenRate
+    if (this.lastWrittenRate === null || rate !== this.lastWrittenRate) return false
+    this.lastWrittenRate = null
+    return true
   }
 
   onSeek(): void {
@@ -157,8 +158,12 @@ export class Scheduler {
   }
 
   private setRate(rate: number): void {
-    this.lastWrittenRate = rate
+    // An assignment that changes nothing fires no ratechange, so it must not
+    // leave a claim behind for a later genuine change to match.
+    if (this.video.playbackRate === rate) return
     this.video.playbackRate = rate
+    // Read back: a clamp must not leave a claim for a rate the video never took.
+    this.lastWrittenRate = this.video.playbackRate
   }
 
   private restore(): void {

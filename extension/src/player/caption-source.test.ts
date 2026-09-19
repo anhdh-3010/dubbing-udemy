@@ -13,8 +13,8 @@ interface FakeCue {
   text: string
 }
 
-function fakeTrack(kind: string, cues: FakeCue[]) {
-  return { kind, mode: 'disabled', cues }
+function fakeTrack(kind: string, cues: FakeCue[], language = '') {
+  return { kind, mode: 'disabled', cues, language }
 }
 
 function videoWithTracks(...tracks: ReturnType<typeof fakeTrack>[]): HTMLVideoElement {
@@ -57,5 +57,15 @@ describe('cuesFromTextTracks', () => {
     cuesFromTextTracks(video)
 
     expect(captions.mode).toBe('hidden')
+  })
+
+  it('ưu tiên track tiếng Anh khi nhiều track đều có cue', () => {
+    const spanish = fakeTrack('captions', [{ startTime: 0, endTime: 2, text: 'hola' }], 'es')
+    const english = fakeTrack('captions', [{ startTime: 0, endTime: 2, text: 'hello' }], 'en')
+    const video = videoWithTracks(spanish, english)
+
+    const cues = cuesFromTextTracks(video)
+
+    expect(cues).toEqual([{ start: 0, end: 2, text: 'hello' }])
   })
 })

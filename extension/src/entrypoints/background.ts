@@ -1,4 +1,4 @@
-import { translateBatch } from '../background/gemini'
+import { InvalidApiKeyError, translateBatch } from '../background/gemini'
 import { isCaptionUrlAllowed } from '../player/caption-hook'
 import type { Segment } from '../core/types'
 
@@ -21,14 +21,23 @@ export default defineBackground(() => {
         .get('apiKey')
         .then(async ({ apiKey }) => {
           if (typeof apiKey !== 'string' || apiKey === '') {
-            sendResponse({ error: 'Chưa có API key. Mở trang cài đặt để nhập.' })
+            // No key to retry with: continuing to the next batch would just
+            // repeat this failure for the rest of the lecture.
+            sendResponse({ error: 'Chưa có API key. Mở trang cài đặt để nhập.', fatal: true })
             return
           }
           try {
             const map = await translateBatch(msg.batch, apiKey)
             sendResponse({ translations: Array.from(map.entries()) })
           } catch (e) {
-            sendResponse({ error: e instanceof Error ? e.message : String(e) })
+            // A rejected key will keep failing every subsequent batch too;
+            // everything else (rate limits, 5xx) is transient and worth
+            // retrying on the next batch.
+            if (e instanceof InvalidApiKeyError) {
+              sendResponse({ error: e.message, fatal: true })
+            } else {
+              sendResponse({ error: e instanceof Error ? e.message : String(e) })
+            }
           }
         })
         // If reading storage itself fails, the `.then` above never runs, so
