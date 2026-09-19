@@ -226,7 +226,12 @@ Kết luận đã sửa: **VieNeu chạy WASM nhiều khả năng khả thi, ch�
 
 **Quyết định:** không làm ở v1. Server native chạy được ngay hôm nay và cho bạn extension dùng được sớm. Đưa WASM thành một spike riêng ở v2, với danh sách cần xác minh trước khi cam kết:
 
-1. `sea-g2p` có biên dịch sang `wasm32-unknown-unknown` không — vướng mắc hay gặp là `std::fs` để nạp từ điển, và `rayon` nếu nó dùng đa luồng.
+1. `sea-g2p` biên dịch sang `wasm32-unknown-unknown`. **Đã khảo sát phụ thuộc** — ba thứ chặn đường, đều gỡ được nhưng phải fork:
+   - `pyo3` với feature `extension-module`: lớp binding sang Python, không sang wasm được. Cần đưa vào feature flag và thêm `wasm-bindgen` thay thế.
+   - `memmap2`: wasm32 không có memory-mapped file. Cần đổi sang nạp từ điển thẳng vào bộ nhớ.
+   - `rayon`: đa luồng trên wasm đòi `wasm-bindgen-rayon` cùng header COOP/COEP. Đơn giản nhất là tắt, chấp nhận chậm hơn.
+
+   `regex`, `fancy-regex`, `once_cell`, `unicode-normalization` đều tương thích wasm.
 2. Ba đồ thị ONNX có nạp được trong `onnxruntime-web` không — kiểm tra opset và các toán tử ít gặp.
 3. Trần bộ nhớ thực tế khi giữ 269MB trọng số trong offscreen document.
 4. RTF đo thật trong trình duyệt, không phải ước tính.
