@@ -18,6 +18,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+# Must be set before onnxruntime is imported, which happens lazily inside
+# _engine(). Two threads beat the default by about 18% on this workload —
+# it loses to thread contention rather than gaining from more cores (spec
+# 8.1). setdefault, not assignment: an explicit value from the environment
+# or the launchd plist still wins.
+os.environ.setdefault("OMP_NUM_THREADS", "2")
+
 VOICE = os.environ.get("VIENEU_VOICE", "Minh Quân")
 STEPS = int(os.environ.get("VIENEU_STEPS", "8"))
 PORT = int(os.environ.get("PORT", "8770"))
@@ -111,4 +118,8 @@ def health() -> dict:
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run(app, host=os.environ.get("HOST", "0.0.0.0"), port=PORT, workers=1)
+    # Loopback by default, not 0.0.0.0. The mixed-content exemption that lets
+    # an HTTPS page call this server applies to 127.0.0.1 only (spec 4.2), so
+    # binding wider buys nothing and exposes the machine to its LAN. Anyone
+    # who wants that has to ask for it by name.
+    uvicorn.run(app, host=os.environ.get("HOST", "127.0.0.1"), port=PORT, workers=1)
