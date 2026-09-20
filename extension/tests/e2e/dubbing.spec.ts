@@ -125,6 +125,18 @@ test('the service worker reaches the TTS server and returns playable audio', asy
     const health = await page.evaluate(() => chrome.runtime.sendMessage({ type: 'tts-health' }))
     expect(health).toEqual({ ok: true })
 
+    // `health` above only proves *some* server on port 5599 answered 200 —
+    // indistinguishable from this test having silently reached the *real*
+    // server on 8770 instead, if the `--mode e2e` TTS_BASE_URL redirection
+    // (tts.ts) ever broke. The real launchd agent stays up on this machine
+    // throughout, so that failure would not even error, just quietly test
+    // against production. Hit /health directly and check the stub's own
+    // marker (scripts/serve-fixtures.mjs) to prove this ran against the stub.
+    const rawHealth = (await page.evaluate(() =>
+      fetch('http://127.0.0.1:5599/health').then((r) => r.json()),
+    )) as { status?: string; model_loaded?: boolean; stub?: boolean }
+    expect(rawHealth.stub).toBe(true)
+
     const spoken = (await page.evaluate(() =>
       chrome.runtime.sendMessage({
         type: 'tts-speak',
@@ -134,7 +146,7 @@ test('the service worker reaches the TTS server and returns playable audio', asy
 
     expect(spoken.error).toBeUndefined()
     expect(spoken.duration).toBeGreaterThan(0)
-    // The first six bytes of any WAV. Proves the base64 round trip through
+    // The first four bytes of any WAV. Proves the base64 round trip through
     // sendMessage's JSON serialisation preserved the bytes — the one thing
     // spec 8.3 says cannot be taken for granted.
     expect(atob(spoken.audio!.slice(0, 8)).startsWith('RIFF')).toBe(true)
