@@ -4,14 +4,36 @@ VieNeu v3 Nano behind an OpenAI-shaped HTTP endpoint, for the Udemy dubbing exte
 
 ## Run
 
+Native under `launchd` is the default. Docker still works and is documented
+below, but it measured 2.7x slower on this machine (see the table further
+down), so it is not what runs day to day.
+
 ```bash
-docker-compose up -d        # or: docker build -t udemy-dubbing-tts . && docker run ...
-curl http://127.0.0.1:8770/health
+uv venv --python 3.14 .venv
+uv pip install -p .venv -r requirements.txt
+./install-agent.sh
 ```
 
-The model is not baked into the image. The host's HuggingFace cache is
-mounted at `/models`, so the first run reuses weights already on disk
-and downloads them only if they are missing.
+`install-agent.sh` writes `~/Library/LaunchAgents/com.udemy-dubbing.tts.plist`
+with this directory's real path substituted in, loads it, and waits for
+`/health` to answer. The agent has `RunAtLoad` and `KeepAlive`, so the server
+comes back after a crash and after a reboot.
+
+The model is loaded on the first synthesis request, not at startup, and stays
+in memory afterwards: about 478 MB resident for as long as the agent runs.
+That is the deliberate trade — no second cold start, ever.
+
+Logs go to `tts.log` in this directory. To remove the agent:
+
+```bash
+./uninstall-agent.sh
+```
+
+To run it in the foreground instead, without launchd:
+
+```bash
+OMP_NUM_THREADS=2 ./.venv/bin/python app.py
+```
 
 ## Endpoint
 
@@ -26,7 +48,8 @@ Responses carry `X-Audio-Duration` (seconds, exact) so the scheduler can
 compute its stretch factor without decoding the audio first.
 
 `voice` and `steps` may be set per request; the defaults come from
-`VIENEU_VOICE` and `VIENEU_STEPS` in `docker-compose.yml`.
+`VIENEU_VOICE` and `VIENEU_STEPS` in `com.udemy-dubbing.tts.plist` (or
+`docker-compose.yml` under Docker).
 
 ## Why not `python -m apps.openai_speech`
 
@@ -55,11 +78,12 @@ build cannot reach the accelerated kernels the macOS build uses.
 Still comfortably faster than real time, so the extension's lookahead
 stays ahead of playback either way. The cost is power, not latency.
 
-## Running it natively instead
-
-Same file, no container:
+## Running it in Docker instead
 
 ```bash
-pip install vieneu==3.8.1
-OMP_NUM_THREADS=2 PORT=8770 python app.py
+docker-compose up -d
+curl http://127.0.0.1:8770/health
 ```
+
+Worth it when you need to stand this up on another machine, or want it gone
+without leaving Python behind. Not worth it here: 2.7x slower, same file.
