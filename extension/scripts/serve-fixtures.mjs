@@ -53,28 +53,20 @@ function wav(seconds, sampleRate = 24000) {
   return buf
 }
 
-// Mirrors server/app.py's CORS policy. Not strictly needed — a service
-// worker fetch to a host in host_permissions is exempt from CORS — but
-// keeping the shapes identical means the stub fails the same way the real
-// server would if that ever stops being true.
-const CORS = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'content-type',
-  'Access-Control-Expose-Headers': 'X-Audio-Duration',
-}
-
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost')
 
-  if (req.method === 'OPTIONS') {
-    res.writeHead(204, CORS).end()
-    return
-  }
-
+  // No CORS headers here, and no OPTIONS handler: every caller in the e2e
+  // run is the extension's own service worker (background.ts), whose fetch
+  // to a host covered by host_permissions is exempt from CORS entirely —
+  // no preflight is ever sent, so a handler for one would never run. The
+  // real server (server/app.py) restricts its CORS policy to
+  // chrome-extension:// origins to stop an ordinary web page from reaching
+  // the local TTS server directly; this stub has no such caller to defend
+  // against.
   if (url.pathname === '/health') {
     res
-      .writeHead(200, { 'Content-Type': 'application/json', ...CORS })
+      .writeHead(200, { 'Content-Type': 'application/json' })
       .end(JSON.stringify({ status: 'ok', model_loaded: true, stub: true }))
     return
   }
@@ -101,7 +93,6 @@ const server = createServer((req, res) => {
           'Content-Type': 'audio/wav',
           'Content-Length': data.length,
           'X-Audio-Duration': seconds.toFixed(3),
-          ...CORS,
         })
         .end(data)
     })
