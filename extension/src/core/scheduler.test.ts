@@ -260,6 +260,21 @@ describe('Scheduler: chuẩn bị trước', () => {
     expect(tts.texts).toContain('câu hai')
   })
 
+  it('câu đang cần đọc phải được chuẩn bị trước câu chỉ mới chuẩn bị đón đầu', async () => {
+    // Pins the ordering Finding 2 fixed: maybePrefetch() must run after
+    // selection, not before it. If it ever moves back above the
+    // starting/speaking guard, this single tick would issue the speculative
+    // prepare() for 'câu hai' before the urgent prepare() for 'câu một' —
+    // ['câu hai', 'câu một'] instead of ['câu một'] — and on the local
+    // server, which serialises requests, the sentence someone is waiting to
+    // hear would queue behind one that is not due for up to ten seconds.
+    const { video, tts, scheduler } = setup()
+    video.currentTime = 1.0
+    await scheduler.tick()
+
+    expect(tts.texts).toEqual(['câu một'])
+  })
+
   it('không chuẩn bị câu còn quá xa', async () => {
     const { video, tts, scheduler } = setup()
     scheduler.setSegments([

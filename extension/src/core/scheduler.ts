@@ -162,7 +162,11 @@ export class Scheduler {
 
     const next = this.segments.find(
       (s): s is Segment & { viText: string } =>
-        isReady(s) && !this.spoken.has(s.id) && s.start > now && s.start - now <= PREFETCH_LEAD,
+        isReady(s) &&
+        !this.spoken.has(s.id) &&
+        s.start > now &&
+        s.end > now &&
+        s.start - now <= PREFETCH_LEAD,
     )
     if (next === undefined) return
 
