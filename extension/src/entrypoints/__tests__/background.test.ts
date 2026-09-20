@@ -84,3 +84,45 @@ describe('background: fetch-caption security gate', () => {
     expect(res).not.toHaveProperty('text')
   })
 })
+
+describe('background: translate lỗi vĩnh viễn', () => {
+  let listener: Listener
+
+  beforeEach(async () => {
+    vi.resetModules()
+    stubDefineBackground()
+
+    const addListener = vi.fn((l: Listener) => {
+      listener = l
+    })
+    vi.stubGlobal('chrome', {
+      runtime: { onMessage: { addListener } },
+      storage: { local: { get: vi.fn(async () => ({ apiKey: 'KEY' })) } },
+    })
+
+    // A model-id 404, shaped like Gemini's real error body — the underlying
+    // call fails permanently (not a bad key, not transient).
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ error: { message: 'model retired' } }), { status: 404 })),
+    )
+
+    const mod = await import('../background')
+    mod.default.main()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('lỗi dịch vĩnh viễn (404) trả về fatal: true để dừng bài giảng', async () => {
+    const res = await new Promise((resolve) => {
+      listener(
+        { type: 'translate', batch: [{ id: 1, start: 0, end: 2, srcText: 'hi', status: 'pending' }] },
+        {},
+        resolve,
+      )
+    })
+    expect(res).toMatchObject({ fatal: true })
+  })
+})

@@ -1,4 +1,4 @@
-import { InvalidApiKeyError, translateBatch } from '../background/gemini'
+import { InvalidApiKeyError, PermanentApiError, translateBatch } from '../background/gemini'
 import { isCaptionUrlAllowed } from '../player/caption-hook'
 import type { Segment } from '../core/types'
 
@@ -44,10 +44,11 @@ export default defineBackground(() => {
             const map = await translateBatch(msg.batch, apiKey)
             respond({ translations: Array.from(map.entries()) })
           } catch (e) {
-            // A rejected key will keep failing every subsequent batch too;
+            // A rejected key, or any other permanent error (e.g. a retired
+            // model id), will keep failing every subsequent batch too;
             // everything else (rate limits, 5xx) is transient and worth
             // retrying on the next batch.
-            if (e instanceof InvalidApiKeyError) {
+            if (e instanceof InvalidApiKeyError || e instanceof PermanentApiError) {
               respond({ error: e.message, fatal: true })
             } else {
               respond({ error: e instanceof Error ? e.message : String(e) })

@@ -86,4 +86,36 @@ describe('translateBatch', () => {
     await expect(translateBatch(batch, 'KEY', f as unknown as typeof fetch)).rejects.toThrow(/429/)
     expect(f).toHaveBeenCalledTimes(3)
   })
+
+  it('ném lỗi kèm nội dung của Google khi model bị gỡ (404), không thử lại', async () => {
+    const f = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          error: {
+            code: 404,
+            message:
+              'This model models/gemini-2.5-flash-lite is no longer available to new users. Please update your code to use models/gemini-3.5-flash-lite for the latest features and improvements.',
+            status: 'NOT_FOUND',
+          },
+        }),
+        { status: 404 },
+      ),
+    )
+    await expect(translateBatch(batch, 'KEY', f as unknown as typeof fetch)).rejects.toThrow(
+      /no longer available to new users/,
+    )
+    expect(f).toHaveBeenCalledTimes(1)
+  })
+
+  it('vẫn thử lại ba lần khi lỗi máy chủ 500 (đường thử lại không đổi)', async () => {
+    const f = vi.fn(async () => new Response('server error', { status: 500 }))
+    await expect(translateBatch(batch, 'KEY', f as unknown as typeof fetch)).rejects.toThrow(/500/)
+    expect(f).toHaveBeenCalledTimes(3)
+  })
+
+  it('lỗi 4xx khác với thân không phải JSON vẫn ném lỗi rõ ràng theo mã trạng thái, không văng khi phân tích', async () => {
+    const f = vi.fn(async () => new Response('<html>Bad Request</html>', { status: 400 }))
+    await expect(translateBatch(batch, 'KEY', f as unknown as typeof fetch)).rejects.toThrow(/400/)
+    expect(f).toHaveBeenCalledTimes(1)
+  })
 })
