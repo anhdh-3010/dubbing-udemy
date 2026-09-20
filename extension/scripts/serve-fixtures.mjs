@@ -53,6 +53,11 @@ function wav(seconds, sampleRate = 24000) {
   return buf
 }
 
+// How many times the stub has actually synthesised. The e2e run reads this
+// to tell "the extension asked again" from "the extension used its cache" —
+// a distinction invisible from the page, because both produce the same audio.
+let synthCount = 0
+
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost')
 
@@ -68,6 +73,13 @@ const server = createServer((req, res) => {
     res
       .writeHead(200, { 'Content-Type': 'application/json' })
       .end(JSON.stringify({ status: 'ok', model_loaded: true, stub: true }))
+    return
+  }
+
+  if (url.pathname === '/stub/synth-count') {
+    res
+      .writeHead(200, { 'Content-Type': 'application/json' })
+      .end(JSON.stringify({ count: synthCount }))
     return
   }
 
@@ -87,6 +99,7 @@ const server = createServer((req, res) => {
       // Proportional to the text so the scheduler's stretch maths has
       // something varied to work on, and clamped so the run stays quick.
       const seconds = Math.min(3, Math.max(0.2, input.length / 20))
+      synthCount++
       const data = wav(seconds)
       res
         .writeHead(200, {

@@ -203,3 +203,56 @@ test('the page can play synthesised audio at the rate ceiling', async () => {
     await context.close()
   }
 })
+
+test('câu đã tổng hợp một lần thì lần sau lấy từ cache, không gọi server nữa', async () => {
+  const context = await chromium.launchPersistentContext('', {
+    headless: HEADLESS,
+    channel: CHANNEL,
+    args: TTS_LAUNCH_ARGS,
+  })
+
+  try {
+    const page = await openExtensionPage(context)
+
+    // An extension page's fetch to a host in host_permissions is exempt from
+    // CORS, same as the service worker's — so the page can read the stub's
+    // counter directly.
+    const synthCount = (): Promise<number> =>
+      page.evaluate(async () => {
+        const res = await fetch('http://127.0.0.1:5599/stub/synth-count')
+        return ((await res.json()) as { count: number }).count
+      })
+
+    const speak = (text: string): Promise<{ audio?: string; duration?: number; error?: string }> =>
+      page.evaluate(
+        (t) => chrome.runtime.sendMessage({ type: 'tts-speak', text: t }),
+        text,
+      ) as Promise<{ audio?: string; duration?: number; error?: string }>
+
+    const before = await synthCount()
+
+    const first = await speak('Một câu để kiểm tra cache.')
+    expect(first.error).toBeUndefined()
+    expect(await synthCount()).toBe(before + 1)
+
+    const second = await speak('Một câu để kiểm tra cache.')
+    expect(second.error).toBeUndefined()
+    // The counter did not move: Chrome's own IndexedDB answered.
+    expect(await synthCount()).toBe(before + 1)
+    // And what it answered with is byte-for-byte what the server sent, all
+    // the way through an ArrayBuffer round trip in IndexedDB and a base64
+    // round trip through sendMessage's JSON.
+    expect(second.audio).toBe(first.audio)
+    expect(second.duration).toBe(first.duration)
+
+    // A different sentence still reaches the server — proof the counter
+    // counts, and that the cache is keyed on the text rather than answering
+    // everything from one row.
+    const other = await speak('Một câu khác hẳn.')
+    expect(other.error).toBeUndefined()
+    expect(await synthCount()).toBe(before + 2)
+    expect(other.audio).not.toBe(first.audio)
+  } finally {
+    await context.close()
+  }
+})
