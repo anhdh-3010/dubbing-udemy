@@ -1,7 +1,10 @@
 import { CAPTION_MESSAGE, installCaptionHook, isCaptionUrlAllowed } from '../player/caption-hook'
 
 export default defineContentScript({
-  matches: ['https://www.udemy.com/*'],
+  // lg.udemy.com is where the lecture player actually runs, observed on
+  // live traffic; www.udemy.com is kept in case Udemy still serves the
+  // course-taking UI there for some users/regions.
+  matches: ['https://www.udemy.com/*', 'https://lg.udemy.com/*'],
   world: 'MAIN',
   runAt: 'document_start',
   main() {

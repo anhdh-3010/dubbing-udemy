@@ -16,7 +16,10 @@ const cueSignature = (cues: Cue[]): string =>
   cues.length === 0 ? '' : `${cues.length}|${cues[0].text}|${cues[cues.length - 1].text}`
 
 export default defineContentScript({
-  matches: ['https://www.udemy.com/*'],
+  // lg.udemy.com is where the lecture player actually runs, observed on
+  // live traffic; www.udemy.com is kept in case Udemy still serves the
+  // course-taking UI there for some users/regions.
+  matches: ['https://www.udemy.com/*', 'https://lg.udemy.com/*'],
   runAt: 'document_idle',
 
   main() {
