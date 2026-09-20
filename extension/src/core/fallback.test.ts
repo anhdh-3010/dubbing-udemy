@@ -131,6 +131,22 @@ describe('FallbackProvider.prepare', () => {
     expect(changes.map((c) => c[0])).toEqual(['fallback', 'primary'])
   })
 
+  it('vẫn chỉ nói một lần khi primary chết lại sau khi thử lại', async () => {
+    // A flapping primary — fails, sits out the cooldown, gets retried, fails
+    // again — must not fire a second 'fallback' announcement. Task 8 turns
+    // each announcement into an on-page notice, so a second one here would
+    // show up as a spurious repeated toast on every flap cycle.
+    const { primary, provider, changes, tick } = setup(30_000)
+    primary.failWith = new Error('boom')
+
+    await provider.prepare('một', signal())
+    tick(30_000)
+    await provider.prepare('hai', signal())
+
+    expect(provider.status).toBe('fallback')
+    expect(changes).toHaveLength(1)
+  })
+
   it('chỉ nói khi trạng thái thật sự đổi, không nói mỗi câu', async () => {
     const { primary, provider, changes } = setup()
     primary.failWith = new Error('boom')
