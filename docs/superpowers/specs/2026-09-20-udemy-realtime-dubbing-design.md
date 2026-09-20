@@ -90,7 +90,28 @@ Ràng buộc của MV3 phải tính tới: `chrome.webRequest` **không đọc �
 
 **Đường dự phòng:** đọc `video.textTracks` ở chế độ `hidden`. Dùng khi việc bắt request không thành — ví dụ phụ đề đã nằm trong cache của trang nên không có request nào phát ra để mà bắt.
 
-Cần xác nhận ở M1: dạng chính xác của endpoint và tên trường chứa URL caption.
+**Đã quan sát trên traffic thật (2026-09-20).** Udemy liệt kê phụ đề trong response của API bài giảng:
+
+```
+https://lg.udemy.com/api-2.0/users/me/subscribed-courses/{courseId}/lectures/{lectureId}/
+    ?fields[lecture]=asset,...&fields[asset]=...,captions,...
+```
+
+URL nằm ở `asset.captions[]`, mỗi phần tử có `url`, `locale_id`, `video_label` và `source`. Bản thân file phụ đề có dạng:
+
+```
+https://vtt-c.udemycdn.com/{assetId}/{locale_id}/{yyyy-mm-dd_hh-mm-ss}-{hash}.vtt
+    ?Expires=...&Signature=...&Key-Pair-Id=...
+```
+
+Bốn điểm rút ra, đều ảnh hưởng tới code:
+
+- **URL ký ngắn hạn.** `Expires` quan sát được chỉ cách thời điểm gọi vài giờ, và mỗi lần ký lại cho `Signature` khác. Không cache qua phiên; phải fetch ngay sau khi bắt được.
+- **Segment locale là dấu hiệu nhận dạng.** Đường dẫn luôn có `/{locale_id}/` ngay trước tên file. Đây là thứ phân biệt phụ đề với các file `.vtt` khác của Udemy.
+- **Có bẫy `.vtt` không phải phụ đề.** Trang cũng tải `https://mp4-c.udemycdn.com/{...}/{n}/thumb-sprites.vtt` — track ảnh xem trước của thanh tua. Nó là WebVTT hợp lệ, nội dung cue là toạ độ ảnh (`thumb-sprites.jpg#xywh=...`). Lọc theo đuôi `.vtt` đơn thuần sẽ nhận nhầm nó; `isCaptionUrlAllowed` vì thế bắt buộc có segment locale.
+- **Ngôn ngữ gốc có thể không phải `en_US`.** Khoá học quan sát được có 8 track, tất cả `source: "auto"`, và bản tiếng Anh là `en_GB`. Việc so khớp ngôn ngữ phải theo tiền tố `en`, không phải giá trị chính xác.
+
+Video phát qua HLS (`application/x-mpegURL`), nên player nhiều khả năng tự tạo TextTrack bằng script thay vì dùng thẻ `<track>`.
 
 ## 5. Mô hình dữ liệu
 
@@ -320,7 +341,7 @@ Bộ máy đồng bộ là nơi bug sẽ trú ngụ, và gần như toàn bộ n
 
 ## 13. Câu hỏi còn treo
 
-1. **Endpoint phụ đề của Udemy có dạng chính xác ra sao?** Cơ chế bắt request đã chốt; còn phải xác nhận URL, tên trường chứa caption, và liệu có khóa học nào chỉ dùng phụ đề nhúng trong HLS hay không. Đây là việc xác minh ở M1, không phải câu hỏi thiết kế.
+1. **Trang gọi file phụ đề bằng `fetch` hay `XMLHttpRequest`?** Dạng endpoint và tên trường đã xác nhận xong ở M1 — xem mục 4.5. Còn treo đúng hai điểm: transport của request `.vtt` (hook hiện chỉ vá `fetch`, trong khi mục 4.5 yêu cầu vá cả hai), và liệu có khoá học nào chỉ nhúng phụ đề trong luồng HLS hay không. Vẫn là việc xác minh, không phải câu hỏi thiết kế.
 2. **Spike WASM cho VieNeu có đáng làm sớm hơn v2 không?** Bốn bước xác minh nằm ở mục 8.2. Nếu chạy được thì bỏ hẳn được server — nhưng đó là công việc port, không phải cấu hình.
 
 ---
