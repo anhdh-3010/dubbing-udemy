@@ -100,49 +100,66 @@ export class Scheduler {
   async tick(): Promise<void> {
     if (this.stopped || this.video.paused) return
 
-    // Ahead of the guards below on purpose: the time to prepare the next
-    // sentence is precisely while the current one is being spoken.
+    if (!this.starting && this.speaking === null) {
+      const now = this.video.currentTime
+      const index = this.segments.findIndex(
+        (s) => !this.spoken.has(s.id) && now >= s.start && now < s.end,
+      )
+
+      if (index !== -1) {
+        const segment = this.segments[index]
+        if (now - segment.start > MAX_LATENESS) {
+          this.spoken.add(segment.id)
+        } else if (!isReady(segment)) {
+          // Not translated yet: let the original audio play at full volume.
+          this.spoken.add(segment.id)
+        } else {
+          this.spoken.add(segment.id)
+          this.starting = true
+          try {
+            await this.speak(segment, this.segments[index + 1], now)
+          } finally {
+            this.starting = false
+          }
+          // The urgent prepare this just issued must never queue behind a
+          // speculative one on the local server, which serialises requests
+          // (measured: a concurrent second request waits for the first).
+          // Returning here means this tick prepares only the segment that
+          // was just selected; the next sentence is prefetched starting on
+          // the next frame, ~16ms later, while this one is being spoken.
+          return
+        }
+      }
+    }
+
+    // Reached whenever nothing was selected this frame: nothing is due yet,
+    // a segment was just skipped (falling through here, rather than
+    // returning above, starts its replacement's prefetch immediately
+    // instead of a frame late), or a sentence is already being
+    // prepared/spoken and the guard above skipped selection entirely — the
+    // moment to look ahead in every case.
     this.maybePrefetch()
-
-    if (this.starting || this.speaking !== null) return
-
-    const now = this.video.currentTime
-    const index = this.segments.findIndex(
-      (s) => !this.spoken.has(s.id) && now >= s.start && now < s.end,
-    )
-    if (index === -1) return
-
-    const segment = this.segments[index]
-    if (now - segment.start > MAX_LATENESS) {
-      this.spoken.add(segment.id)
-      return
-    }
-    if (!isReady(segment)) {
-      // Not translated yet: let the original audio play at full volume.
-      this.spoken.add(segment.id)
-      return
-    }
-
-    this.spoken.add(segment.id)
-    this.starting = true
-    try {
-      await this.speak(segment, this.segments[index + 1], now)
-    } finally {
-      this.starting = false
-    }
   }
 
   private maybePrefetch(): void {
+    const now = this.video.currentTime
     const held = this.prefetched
     if (held !== null) {
-      // tick() marks a segment spoken when it skips one — too late, or not
-      // translated yet — and a prefetch for such a segment will never be
-      // consumed by anything.
-      if (this.spoken.has(held.id)) this.discardPrefetch()
-      else return
+      const segment = this.segments.find((s) => s.id === held.id)
+      // A held entry is dead once selection can never pick it again: its
+      // segment was replaced (setSegments), tick() already marked it spoken
+      // (skipped for lateness or for not being translated), or its slot
+      // ended without ever being selected at all — a long sentence
+      // overrunning into the next slot, or a hidden tab suspending
+      // requestAnimationFrame while the video kept playing, both step the
+      // playhead over a whole slot with no seek and no tick in between.
+      if (segment === undefined || this.spoken.has(held.id) || now >= segment.end) {
+        this.discardPrefetch()
+      } else {
+        return
+      }
     }
 
-    const now = this.video.currentTime
     const next = this.segments.find(
       (s): s is Segment & { viText: string } =>
         isReady(s) && !this.spoken.has(s.id) && s.start > now && s.start - now <= PREFETCH_LEAD,

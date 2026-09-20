@@ -143,7 +143,10 @@ describe('Scheduler', () => {
     video.paused = true
     video.currentTime = 1.0
     await scheduler.tick()
-    expect(played(tts)).toHaveLength(0)
+    // tick() returns before maybePrefetch() runs at all while paused, so
+    // this is the one place `played(tts)` would be too weak: it must prove
+    // nothing was synthesised, not merely that nothing was played.
+    expect(tts.prepared).toHaveLength(0)
   })
 
   it('bỏ qua segment đã trôi quá xa thay vì đọc đuổi', async () => {
@@ -212,7 +215,10 @@ describe('Scheduler', () => {
     scheduler.stop()
     video.currentTime = 1.0
     await scheduler.tick()
-    expect(played(tts)).toHaveLength(0)
+    // Same reasoning as the paused case above: tick() returns before
+    // maybePrefetch() once stopped, so nothing should have been prepared at
+    // all — `played(tts)` would only prove nothing was spoken.
+    expect(tts.prepared).toHaveLength(0)
   })
 })
 
@@ -361,5 +367,28 @@ describe('Scheduler: chuẩn bị trước', () => {
 
     expect(video.volume).toBeCloseTo(1)
     expect(video.playbackRate).toBeCloseTo(1)
+  })
+
+  it('bỏ phần đã chuẩn bị khi cả khung giờ trôi qua mà không được chọn lần nào', async () => {
+    // Unlike the "vào quá muộn" case above, segment 0 is never selected at
+    // all here — the playhead jumps straight from before its start to past
+    // its end, so tick() never adds its id to `spoken`. This reproduces a
+    // long sentence overrunning into the next slot, or a hidden tab
+    // suspending requestAnimationFrame while the video keeps playing: two
+    // ordinary ways the playhead steps over a whole slot with no selection
+    // and no seek. A held prefetch that is invalidated only by `spoken` is
+    // never released in this case, and — because maybePrefetch() returns
+    // early whenever something is already held — no later sentence is ever
+    // prepared again for the rest of the lecture either.
+    const { video, tts, scheduler } = setup()
+    video.currentTime = 0.5
+    await scheduler.tick()
+    expect(tts.texts).toEqual(['câu một'])
+
+    video.currentTime = 5.5 // past segment 0's end (5), segment 1 not due yet
+    await scheduler.tick()
+
+    await vi.waitFor(() => expect(tts.prepared[0].cancelled).toBe(true))
+    expect(tts.texts).toContain('câu hai')
   })
 })
