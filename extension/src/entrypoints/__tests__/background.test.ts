@@ -1,12 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
+  CacheLookupRequest,
   FetchCaptionRequest,
   TranslateRequest,
   TtsHealthRequest,
   TtsSpeakRequest,
 } from '../background'
 
-type Message = TranslateRequest | FetchCaptionRequest | TtsHealthRequest | TtsSpeakRequest
+type Message =
+  | TranslateRequest
+  | FetchCaptionRequest
+  | TtsHealthRequest
+  | TtsSpeakRequest
+  | CacheLookupRequest
 type SendResponse = (response: unknown) => void
 type Listener = (msg: Message, sender: unknown, sendResponse: SendResponse) => boolean | void
 
@@ -123,7 +129,11 @@ describe('background: translate lỗi vĩnh viễn', () => {
   it('lỗi dịch vĩnh viễn (404) trả về fatal: true để dừng bài giảng', async () => {
     const res = await new Promise((resolve) => {
       listener(
-        { type: 'translate', batch: [{ id: 1, start: 0, end: 2, srcText: 'hi', status: 'pending' }] },
+        {
+          type: 'translate',
+          batch: [{ id: 1, start: 0, end: 2, srcText: 'hi', status: 'pending' }],
+          lectureId: 'L1',
+        },
         {},
         resolve,
       )

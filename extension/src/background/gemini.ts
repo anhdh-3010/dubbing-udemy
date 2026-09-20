@@ -10,8 +10,19 @@ import type { Segment } from '../core/types'
 // key, with the response telling callers to move to `gemini-3.5-flash-lite`.
 // When this pinned model eventually ages out too, FIX 2 (below) makes the
 // resulting error self-explanatory instead of a bare status code.
-const ENDPOINT =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent'
+/** The model id on its own, because two things need it now: the endpoint
+ *  below, and the translation cache key. A cached translation made by one
+ *  model must not be served as another model's output, so the key carries
+ *  this — which means it cannot stay buried inside a URL string. */
+export const MODEL_ID = 'gemini-3.5-flash-lite'
+
+/** What `core/translate/prompt.ts` translates into. A constant rather than a
+ *  parameter: v1 translates into Vietnamese and nothing else (spec 3). It
+ *  exists so the cache key names the language explicitly instead of assuming
+ *  it. */
+export const TARGET_LANG = 'vi'
+
+const ENDPOINT = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL_ID}:generateContent`
 
 const MAX_ATTEMPTS = 3
 

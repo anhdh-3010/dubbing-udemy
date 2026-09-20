@@ -1,11 +1,30 @@
-import { InvalidApiKeyError, PermanentApiError, translateBatch } from '../background/gemini'
+import { InvalidApiKeyError, MODEL_ID, PermanentApiError, TARGET_LANG, translateBatch } from '../background/gemini'
+import { getTranslations, putTranslations, type TranslationInput } from '../background/cache'
 import { synthesize, ttsHealth } from '../background/tts'
 import { isCaptionUrlAllowed } from '../player/caption-hook'
+import { translationKey } from '../core/cache-policy'
 import type { Segment } from '../core/types'
 
 export interface TranslateRequest {
   type: 'translate'
   batch: Segment[]
+  /** Which lecture these segments came from. Not part of the cache key —
+   *  keys are content-addressed — but stored on each row so M3b can show and
+   *  clear what a lecture has cached. */
+  lectureId: string
+}
+
+/** Asked once per lecture, before any batch is sent to the LLM: which of
+ *  these segments does the cache already know? Everything it answers is
+ *  marked ready by the content script, so `planBatches` never puts it in a
+ *  request. A fully cached lecture therefore costs zero API calls. */
+export interface CacheLookupRequest {
+  type: 'cache-lookup'
+  segments: { id: number; srcText: string }[]
+}
+
+export interface CacheLookupResponse {
+  translations: [number, string][]
 }
 
 export interface FetchCaptionRequest {
@@ -48,10 +67,69 @@ export interface TtsSpeakResponse {
   error?: string
 }
 
-type Request = TranslateRequest | FetchCaptionRequest | TtsHealthRequest | TtsSpeakRequest
+type Request =
+  | TranslateRequest
+  | FetchCaptionRequest
+  | TtsHealthRequest
+  | TtsSpeakRequest
+  | CacheLookupRequest
+
+/** Cache keys for a run of segments, in the same order. Kept as a separate
+ *  step from the lookup so the mapping back to segment ids stays positional
+ *  and obvious — two segments with identical source text share a key, and
+ *  both must come back answered. */
+function keysFor(segments: readonly { srcText: string }[]): Promise<string[]> {
+  return Promise.all(segments.map((s) => translationKey(s.srcText, TARGET_LANG, MODEL_ID)))
+}
+
+async function lookupCached(
+  segments: readonly { id: number; srcText: string }[],
+): Promise<CacheLookupResponse> {
+  if (segments.length === 0) return { translations: [] }
+  const keys = await keysFor(segments)
+  const found = await getTranslations(keys)
+
+  const translations: [number, string][] = []
+  for (const [i, key] of keys.entries()) {
+    const vi = found.get(key)
+    if (vi !== undefined) translations.push([segments[i].id, vi])
+  }
+  return { translations }
+}
+
+async function cacheTranslations(
+  batch: readonly Segment[],
+  translated: ReadonlyMap<number, string>,
+  lectureId: string,
+): Promise<void> {
+  const keys = await keysFor(batch)
+  const rows: TranslationInput[] = []
+  for (const [i, seg] of batch.entries()) {
+    const vi = translated.get(seg.id)
+    // The model drops and renumbers ids often enough that gemini.ts has a
+    // retry loop for it; whatever is still missing after that simply is not
+    // cached.
+    if (vi === undefined) continue
+    rows.push({ key: keys[i], vi, srcText: seg.srcText, lectureId })
+  }
+  await putTranslations(rows)
+}
 
 export default defineBackground(() => {
   chrome.runtime.onMessage.addListener((msg: Request, _sender, sendResponse) => {
+    if (msg.type === 'cache-lookup') {
+      lookupCached(msg.segments)
+        .then((r) => sendResponse(r))
+        // A cache failure must never leave the content script waiting. It gets
+        // an empty answer and translates everything, which is exactly what it
+        // did before the cache existed.
+        .catch((e) => {
+          console.warn('[udemy-dubbing] cache-lookup:', e)
+          sendResponse({ translations: [] } satisfies CacheLookupResponse)
+        })
+      return true
+    }
+
     if (msg.type === 'translate') {
       const respond = (r: TranslateResponse) => sendResponse(r)
       chrome.storage.local
@@ -65,6 +143,11 @@ export default defineBackground(() => {
           }
           try {
             const map = await translateBatch(msg.batch, apiKey)
+            // Written before the reply, deliberately: MV3 may terminate the
+            // worker as soon as sendResponse returns, and a write started
+            // after that is a write that can be lost. Costs a few
+            // milliseconds.
+            await cacheTranslations(msg.batch, map, msg.lectureId)
             respond({ translations: Array.from(map.entries()) })
           } catch (e) {
             // A rejected key, or any other permanent error (e.g. a retired
