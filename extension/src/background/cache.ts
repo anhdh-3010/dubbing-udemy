@@ -353,6 +353,14 @@ export async function getAudio(key: string): Promise<CachedAudio | null> {
   })
 }
 
+/** Removes one audio row. Used to drop a row that turned out to be
+ *  unreadable — the cache-hit path decodes what this stores, so a corrupt
+ *  row must not be left behind to fail every future replay of the same
+ *  sentence the same way. */
+export async function deleteAudio(key: string): Promise<void> {
+  await withDb(undefined, (db) => deleteKeys(db, AUDIO, [key]))
+}
+
 export async function putAudio(
   key: string,
   wav: ArrayBuffer,

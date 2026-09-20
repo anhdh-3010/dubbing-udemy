@@ -1,5 +1,12 @@
 import { InvalidApiKeyError, MODEL_ID, PermanentApiError, TARGET_LANG, translateBatch } from '../background/gemini'
-import { getAudio, getTranslations, putAudio, putTranslations, type TranslationInput } from '../background/cache'
+import {
+  deleteAudio,
+  getAudio,
+  getTranslations,
+  putAudio,
+  putTranslations,
+  type TranslationInput,
+} from '../background/cache'
 import { TTS_STEPS, TTS_VOICE, synthesize, toBase64, ttsHealth } from '../background/tts'
 import { isCaptionUrlAllowed } from '../player/caption-hook'
 import { audioKey, translationKey } from '../core/cache-policy'
@@ -124,17 +131,40 @@ async function cacheTranslations(
  *  other case: scrubbing back to hear a line again, and rewatching a lecture
  *  the next day. */
 async function speakCached(text: string): Promise<TtsSpeakResponse> {
-  const key = await audioKey(text, TTS_VOICE, TTS_STEPS)
+  // Unlike `putAudio`/`getAudio`, `audioKey` is not contractually
+  // non-throwing (it lives in core/cache-policy.ts, outside `withDb`'s
+  // guarantee) — and it is exactly the step "derived before synthesis" does
+  // not protect: if it throws, there is nothing derived at all. Treat that
+  // the same as a cache miss rather than failing the sentence: no key means
+  // no lookup and no write, but synthesis still runs below.
+  let key: string | null = null
+  try {
+    key = await audioKey(text, TTS_VOICE, TTS_STEPS)
+  } catch (e) {
+    console.warn('[udemy-dubbing] audioKey failed, synthesising without cache:', e)
+  }
 
-  const hit = await getAudio(key)
-  if (hit !== null) {
-    return { audio: toBase64(new Uint8Array(hit.wav)), duration: hit.duration }
+  if (key !== null) {
+    const hit = await getAudio(key)
+    if (hit !== null) {
+      try {
+        return { audio: toBase64(new Uint8Array(hit.wav)), duration: hit.duration }
+      } catch (e) {
+        // A row that fails to decode must not keep failing on every future
+        // replay of this sentence: delete it so the next call sees a plain
+        // miss instead of repeating this exact failure forever.
+        console.warn('[udemy-dubbing] cached audio row is malformed, deleting:', e)
+        await deleteAudio(key)
+      }
+    }
   }
 
   const { wav, duration } = await synthesize(text)
-  // Before the reply, for the same reason translations are: MV3 can
-  // terminate this worker the moment sendResponse returns.
-  await putAudio(key, wav.buffer, duration)
+  if (key !== null) {
+    // Before the reply, for the same reason translations are: MV3 can
+    // terminate this worker the moment sendResponse returns.
+    await putAudio(key, wav.buffer, duration)
+  }
   return { audio: toBase64(wav), duration }
 }
 

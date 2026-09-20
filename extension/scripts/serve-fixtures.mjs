@@ -77,8 +77,15 @@ const server = createServer((req, res) => {
   }
 
   if (url.pathname === '/stub/synth-count') {
+    // No validators on this 200 (no ETag, no Last-Modified), so Chrome is
+    // unlikely to cache it heuristically — but the e2e test pinning this
+    // branch's headline claim (a second synthesis of the same sentence never
+    // reaches the server) reads this exact counter, and a stale cached read
+    // would make that test pass for the wrong reason: a count that never
+    // moved because the response was cached, not because the cache under
+    // test worked. Explicit `no-store` removes the ambiguity outright.
     res
-      .writeHead(200, { 'Content-Type': 'application/json' })
+      .writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
       .end(JSON.stringify({ count: synthCount }))
     return
   }

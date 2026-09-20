@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_AUDIO_QUOTA_BYTES,
-  PROMPT_VERSION,
   TRANSLATION_MAX_ENTRIES,
   audioKey,
   planEvictions,
   sha256Hex,
   translationKey,
 } from './cache-policy'
+import { PROMPT_VERSION } from './translate/prompt'
 
 describe('sha256Hex', () => {
   it('khớp vector chuẩn của SHA-256', async () => {

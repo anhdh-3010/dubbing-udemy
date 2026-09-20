@@ -35,12 +35,14 @@ const putAudio = vi.fn(async () => {
   await Promise.resolve()
   calls.push('putAudio')
 })
+const deleteAudio = vi.fn(async (_key: string) => {})
 
 vi.mock('../../background/cache', () => ({
   getTranslations: (keys: readonly string[]) => getTranslations(keys),
   putTranslations: () => putTranslations(),
   getAudio: (key: string) => getAudio(key),
   putAudio: () => putAudio(),
+  deleteAudio: (key: string) => deleteAudio(key),
   isCacheDisabled: () => false,
 }))
 
@@ -74,7 +76,10 @@ function geminiReturning(pairs: [number, string][]): typeof fetch {
     candidates: [
       {
         content: {
-          parts: [{ text: JSON.stringify(pairs.map(([id, vi]) => ({ id, vi }))) }],
+          // Named `viText`, not `vi` — this arrow runs inside a file that
+          // imports vitest's own `vi`, and shadowing it here would trap
+          // whoever next needs `vi` (e.g. `vi.fn()`) inside this callback.
+          parts: [{ text: JSON.stringify(pairs.map(([id, viText]) => ({ id, vi: viText }))) }],
         },
       },
     ],
@@ -88,6 +93,7 @@ beforeEach(async () => {
   putTranslations.mockClear()
   getAudio.mockClear()
   putAudio.mockClear()
+  deleteAudio.mockClear()
   getTranslations.mockResolvedValue(new Map())
   getAudio.mockResolvedValue(null)
   vi.resetModules()
@@ -272,5 +278,42 @@ describe('cache audio', () => {
     const res = (await send({ type: 'tts-speak', text: '   ' })) as { error?: string }
     expect(res.error).toContain('non-empty')
     expect(getAudio).not.toHaveBeenCalled()
+  })
+
+  it('bản ghi audio trong cache bị hỏng thì vẫn tổng hợp, vẫn trả lời, và xoá bản ghi hỏng', async () => {
+    // A row IndexedDB could never have produced through this code's own
+    // writer, but exactly the shape a foreign write or a future schema
+    // change could leave behind: `wav` that does not decode into bytes.
+    // `toBase64(new Uint8Array(hit.wav))` throws on it — the throw site the
+    // cache-hit path does not otherwise protect.
+    getAudio.mockResolvedValue({ wav: -1 as unknown as ArrayBuffer, duration: 9 })
+    vi.stubGlobal('fetch', ttsReturning([82, 73, 70, 70], 2.5))
+
+    const res = await send({ type: 'tts-speak', text: 'xin chào' })
+
+    // The sentence still gets a dub — a malformed row must degrade to a
+    // miss, not to `{error}`.
+    expect(res).toEqual({ audio: 'UklGRg==', duration: 2.5 })
+    // And the bad row is gone, so the same sentence is not silent again on
+    // the very next replay.
+    expect(deleteAudio).toHaveBeenCalledWith(await audioKey('xin chào', TTS_VOICE, TTS_STEPS))
+  })
+
+  it('audioKey ném lỗi thì vẫn tổng hợp bình thường, không tra hay ghi cache', async () => {
+    // `audioKey` is derived BEFORE synthesis, which is exactly why it is not
+    // covered by "the key is derived before synthesis" reasoning: if
+    // deriving it fails, there is nothing to look up or write with.
+    const digestSpy = vi.spyOn(crypto.subtle, 'digest').mockRejectedValueOnce(new Error('crypto broke'))
+    vi.stubGlobal('fetch', ttsReturning([82, 73, 70, 70], 2.5))
+
+    try {
+      const res = await send({ type: 'tts-speak', text: 'xin chào' })
+
+      expect(res).toEqual({ audio: 'UklGRg==', duration: 2.5 })
+      expect(getAudio).not.toHaveBeenCalled()
+      expect(putAudio).not.toHaveBeenCalled()
+    } finally {
+      digestSpy.mockRestore()
+    }
   })
 })

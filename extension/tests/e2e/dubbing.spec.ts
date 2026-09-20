@@ -204,6 +204,21 @@ test('the page can play synthesised audio at the rate ceiling', async () => {
   }
 })
 
+// Like the test above, this one is immune to a service worker that
+// accidentally reaches the real launchd server on 8770 instead of the stub
+// on 5599 — but by a different mechanism. That test pins an absolute value
+// only the stub can produce (`spoken.duration` == 1.85s, derivable only from
+// its exact clip-length formula). This one instead reads the stub's own
+// `/stub/synth-count` counter through the extension page's own fetch and
+// asserts on DELTAS: `before` and `before + 1`. A misdirected service worker
+// would never move the stub's counter at all, so `before` and `before + 1`
+// would be equal and the very first delta assertion below would fail loudly
+// — it does not merely happen to pass by coincidence, the way an absolute
+// count against an already-running stub could. This is worth writing down
+// because it is invisible in the code: a refactor from deltas to absolute
+// counts (e.g. asserting `synthCount() === 1` after a fresh stub restart)
+// would compile, look equivalent, and quietly remove this safety property
+// without any test going red to say so.
 test('câu đã tổng hợp một lần thì lần sau lấy từ cache, không gọi server nữa', async () => {
   const context = await chromium.launchPersistentContext('', {
     headless: HEADLESS,

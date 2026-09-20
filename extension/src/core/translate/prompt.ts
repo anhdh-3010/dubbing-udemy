@@ -1,5 +1,14 @@
 import type { Segment } from '../types'
 
+/** Bumped whenever the rules below change in a way that would change
+ *  output: the IT-terminology rules, the length budget, the voice. Cached
+ *  translations were produced under the rules in force at the time, so this
+ *  has to be part of `translationKey`'s cache key (core/cache-policy.ts) or
+ *  old output silently survives a rule change.
+ *
+ *  BUMP THIS whenever you edit the rules below. */
+export const PROMPT_VERSION = 1
+
 export function buildPrompt(batch: Segment[]): string {
   const lines = batch
     .map((s) => `  { "id": ${s.id}, "seconds": ${(s.end - s.start).toFixed(1)}, "en": ${JSON.stringify(s.srcText)} }`)

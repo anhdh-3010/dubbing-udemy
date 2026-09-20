@@ -284,6 +284,11 @@ describe('đường lỗi của spec mục 9', () => {
 
   it('cache đã tắt thì mọi thao tác thành trượt, dữ liệu cũ vẫn nằm yên trên đĩa', async () => {
     await putTranslations([{ key: 'k1', vi: 'còn đây', srcText: 's', lectureId: 'L' }])
+    // Written before the cache is disabled, precisely so the read below
+    // proves the short-circuit: without it, 'a1' would answer null simply
+    // because nothing was ever written under that key, whether or not
+    // `disabled` short-circuits the read at all.
+    await putAudio('a1', wav(16), 1)
     await putAudio('bad', unwritable(), 1, 10_000)
     expect(isCacheDisabled()).toBe(true)
 
@@ -294,6 +299,7 @@ describe('đường lỗi của spec mục 9', () => {
     // not destroy what it already holds.
     resetCacheState()
     expect(await getTranslations(['k1'])).toEqual(new Map([['k1', 'còn đây']]))
+    expect((await getAudio('a1'))?.duration).toBe(1)
   })
 
   it('service worker khởi động lại thì cache bật lại', async () => {

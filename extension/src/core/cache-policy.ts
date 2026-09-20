@@ -7,12 +7,7 @@
  * admitted `DOMException` in M2 (see that milestone's Ruling 3).
  */
 
-/** Bumped whenever `core/translate/prompt.ts` changes in a way that would
- *  change output: the IT-terminology rules, the length budget, the voice.
- *  Cached translations were produced under the rules in force at the time,
- *  so the version has to be part of the key or old output silently survives
- *  a rule change. */
-export const PROMPT_VERSION = 1
+import { PROMPT_VERSION } from './translate/prompt'
 
 /** Spec 9's "hạn mức cấu hình được". This is only the default; the real
  *  value is read from `chrome.storage.local` (M3b adds the UI for it). */
