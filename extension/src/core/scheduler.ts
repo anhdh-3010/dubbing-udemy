@@ -117,7 +117,7 @@ export class Scheduler {
           this.spoken.add(segment.id)
           this.starting = true
           try {
-            await this.speak(segment, this.segments[index + 1], now)
+            await this.speak(segment, this.segments[index + 1])
           } finally {
             this.starting = false
           }
@@ -183,6 +183,16 @@ export class Scheduler {
       (utterance) => {
         // Consumed by speak(), or already discarded — either way not ours.
         if (this.prefetched !== entry) return
+        // Currently unreachable: this can only be true if `generation`
+        // changed while `this.prefetched` still === entry, but all three
+        // sites that bump generation (onSeek, onPause, stop) do it via
+        // cancelCurrent(), which calls discardPrefetch() synchronously —
+        // and discardPrefetch() nulls `this.prefetched` before this .then()
+        // callback ever gets to run, so the guard above already returned.
+        // It would become live if a future generation bump ever landed
+        // without going through cancelCurrent()/discardPrefetch() first.
+        // Kept rather than deleted so that path stays safe if it ever
+        // opens up, rather than silently leaking a blob URL.
         if (generation !== this.generation) {
           // A seek landed while this was in flight. It belongs to a position
           // the viewer has left, and the real provider is holding a blob URL
@@ -216,7 +226,6 @@ export class Scheduler {
   private async speak(
     segment: Segment & { viText: string },
     next: Segment | undefined,
-    now: number,
   ): Promise<void> {
     const generation = this.generation
     const taken = await this.take(segment)
@@ -231,11 +240,17 @@ export class Scheduler {
     }
 
     const plan = computeStretch({
-      // The budget is what is left of the slot from where we actually start,
-      // not what it was before we fell behind. tick() admits starts up to
-      // MAX_LATENESS late, and planning from segment.start would hand those
-      // starts time they no longer have.
-      segmentStart: Math.max(segment.start, now),
+      // Read now, not at tick()'s selection time: take() just awaited
+      // provider.prepare(), which is ~0.8s on the real server whenever
+      // there is no usable prefetch to reuse (the first sentence after a
+      // seek, a discarded/failed prefetch, a translation that lands inside
+      // its own slot). Planning from the pre-wait reading would credit the
+      // budget with time that has already elapsed by the time speech
+      // actually starts, understretching by that same ~0.8s — the exact
+      // failure mode spec 6.5 describes, just moved from "at all" to
+      // "usually masked by prefetch". Harmless on the prefetched path,
+      // where take() resolves immediately and the two readings coincide.
+      segmentStart: Math.max(segment.start, this.video.currentTime),
       segmentEnd: segment.end,
       gapAfter: next ? Math.max(0, next.start - segment.end) : 0,
       duration: utterance.duration,
@@ -273,9 +288,13 @@ export class Scheduler {
     const usable = held !== null && held.id === segment.id ? held : null
     if (usable !== null) this.prefetched = null
 
-    // A prefetch for a *different* segment is left alone: find() always
-    // returns the nearest upcoming sentence, so it is the next one, not a
-    // stale one.
+    // A prefetch for a *different* segment is left alone. Usually that
+    // prefetch IS the upcoming sentence maybePrefetch() would pick again —
+    // but not always: if a segment nearer than the held one was still
+    // `pending` when the prefetch was issued and turned `ready` before its
+    // own slot arrived, that nearer segment gets a live synthesis here
+    // instead of reusing anything, and the held prefetch stays queued for
+    // the sentence after it.
     const controller = usable?.controller ?? new AbortController()
     const promise = usable?.promise ?? this.provider.prepare(segment.viText, controller.signal)
 

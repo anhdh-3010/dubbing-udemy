@@ -113,7 +113,9 @@ describe('Scheduler', () => {
     video.currentTime = 1.0
     await scheduler.tick()
     // Unlike onSeek(), onPause() must leave `spoken` intact, so this segment
-    // is not re-selected and no second utterance is prepared.
+    // is not re-selected and no second utterance is *played* — tick() may
+    // still prepare the next sentence ahead of it (spec 6.5), which is why
+    // this asserts played(), not prepared().
     expect(played(tts)).toHaveLength(1)
   })
 
@@ -172,6 +174,42 @@ describe('Scheduler', () => {
     // nhanh lên 1.25 lần. Nếu tính từ start = 1 thì ngân sách thành 5 giây và
     // tốc độ bị kẹp về 1.0.
     expect(spoken(tts)?.rateUsed).toBeCloseTo(1.25)
+  })
+
+  it('tính ngân sách sau khi prepare() xong, không phải lúc tick() được gọi (Finding 2)', async () => {
+    // The test above cannot discriminate this: FakeTTS's default
+    // prepareDelayMs is 0, so tick()'s reading and speak()'s reading of
+    // currentTime are the same instant by construction — the stale-playhead
+    // window is zero either way. Here prepare() takes 800ms, standing in
+    // for the real server's ~0.8s round trip whenever there is no usable
+    // prefetch, and the video is made to move during that wait, exactly as
+    // it would while the viewer keeps watching.
+    vi.useFakeTimers()
+    try {
+      const video = new FakeVideo()
+      const tts = new FakeTTS(() => 5, 800)
+      const scheduler = new Scheduler({ video, provider: tts, duckVolume: 0.1 })
+      scheduler.setSegments(segs())
+      video.currentTime = 1.0 // đúng lúc start của segment 0
+
+      const tick = scheduler.tick()
+      // Fire the pending prepare() timer, but stay synchronous a moment
+      // longer so the video's move lands before speak() reads currentTime
+      // again — advanceTimersByTimeAsync would otherwise drain every
+      // microtask in one go and run computeStretch before this line ever
+      // executes.
+      vi.advanceTimersByTime(800)
+      video.currentTime = 1.8 // trôi 0.8 giây trong lúc prepare() đang chờ
+      await tick
+
+      // Còn (5 - 1.8) + 1 giây lặng = 4.2 giây thực cho một câu dài 5 giây,
+      // nên tốc độ đọc phải là 5/4.2 ≈ 1.19. Nếu ngân sách vẫn tính từ
+      // currentTime lúc tick() bắt đầu (1.0, y hệt lỗi Finding 2 sửa) thì
+      // ngân sách sẽ là (5-1.0)+1 = 5 giây và rateUsed bị kẹp về 1.0.
+      expect(spoken(tts)?.rateUsed).toBeCloseTo(5 / 4.2, 2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('không bắt đầu câu thứ hai khi câu đầu còn đang chuẩn bị', async () => {
