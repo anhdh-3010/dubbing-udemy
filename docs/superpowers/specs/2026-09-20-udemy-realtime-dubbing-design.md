@@ -79,6 +79,12 @@ Udemy phục vụ qua HTTPS, nên một request HTTP trần lẽ ra bị chặn 
   → scheduler bắt đầu đọc; các lô còn lại về dần ở nền
 ```
 
+### 4.4b Trang bài giảng chạy ở đâu
+
+**Đã quan sát (2026-09-20).** Trang học bài không nằm ở `www.udemy.com` mà ở **`lg.udemy.com`**, và nó là document cấp cao nhất chứ không phải iframe. Đường dẫn vẫn giữ dạng `/course/{slug}/learn/lecture/{lectureId}`.
+
+Điều này quyết định `matches` của content script. Match pattern của Chrome đòi host trùng khít khi không có wildcard, nên `https://www.udemy.com/*` **không** khớp `lg.udemy.com` — extension sẽ không được tiêm và nằm im hoàn toàn, không có dấu hiệu lỗi nào. Manifest phải liệt kê cả hai host.
+
 ### 4.5 Lấy phụ đề
 
 Udemy luôn gọi một API trả về file `.vtt` khi nạp bài giảng. Bắt request đó là cách lấy transcript đáng tin cậy nhất: nó cho trọn vẹn nội dung ngay lập tức và không phụ thuộc vào việc người dùng có bật phụ đề trên player hay không.
