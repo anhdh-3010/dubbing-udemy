@@ -10,6 +10,10 @@ export default defineConfig({
       'https://www.udemy.com/*',
       'https://*.udemycdn.com/*',
       'https://generativelanguage.googleapis.com/*',
+      // Match patterns ignore the port, so this one entry covers the real
+      // server on 8770 and the e2e stub on 5599. It is also what exempts
+      // the service worker's fetch from CORS.
+      'http://127.0.0.1/*',
     ],
   },
   hooks: {

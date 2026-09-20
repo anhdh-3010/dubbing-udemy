@@ -1,4 +1,5 @@
 import { InvalidApiKeyError, PermanentApiError, translateBatch } from '../background/gemini'
+import { synthesize, ttsHealth } from '../background/tts'
 import { isCaptionUrlAllowed } from '../player/caption-hook'
 import type { Segment } from '../core/types'
 
@@ -10,6 +11,15 @@ export interface TranslateRequest {
 export interface FetchCaptionRequest {
   type: 'fetch-caption'
   url: string
+}
+
+export interface TtsHealthRequest {
+  type: 'tts-health'
+}
+
+export interface TtsSpeakRequest {
+  type: 'tts-speak'
+  text: string
 }
 
 /**
@@ -25,7 +35,20 @@ export interface TranslateResponse {
   fatal?: boolean
 }
 
-type Request = TranslateRequest | FetchCaptionRequest
+export interface TtsHealthResponse {
+  ok: boolean
+}
+
+/** Mirrors SynthesisResult on success. `error` is set instead on failure —
+ *  the content script treats that as "this sentence gets no dub", not as
+ *  "the lecture is over" (spec 10). */
+export interface TtsSpeakResponse {
+  audio?: string
+  duration?: number
+  error?: string
+}
+
+type Request = TranslateRequest | FetchCaptionRequest | TtsHealthRequest | TtsSpeakRequest
 
 export default defineBackground(() => {
   chrome.runtime.onMessage.addListener((msg: Request, _sender, sendResponse) => {
@@ -90,6 +113,27 @@ export default defineBackground(() => {
       } catch (e) {
         sendResponse({ error: String(e) })
       }
+      return true
+    }
+
+    if (msg.type === 'tts-health') {
+      // ttsHealth never rejects, but the .catch is not dead weight: a
+      // listener that returns true and then never calls sendResponse hangs
+      // the caller until the port closes.
+      ttsHealth()
+        .then((ok) => sendResponse({ ok }))
+        .catch(() => sendResponse({ ok: false }))
+      return true
+    }
+
+    if (msg.type === 'tts-speak') {
+      if (typeof msg.text !== 'string' || msg.text.trim() === '') {
+        sendResponse({ error: 'tts-speak requires non-empty text' })
+        return true
+      }
+      synthesize(msg.text)
+        .then((r) => sendResponse(r))
+        .catch((e) => sendResponse({ error: e instanceof Error ? e.message : String(e) }))
       return true
     }
 
