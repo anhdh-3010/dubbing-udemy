@@ -88,3 +88,98 @@ test('reaches the missing-API-key notice via the native <track> caption fallback
     await context.close()
   }
 })
+
+/** Launch options shared by the TTS tests. The autoplay flag matters:
+ *  `new Audio().play()` is a programmatic play with no user gesture behind
+ *  it, which Chrome blocks by default. `--mute-audio` keeps a CI machine
+ *  quiet without stopping the decode. */
+const TTS_LAUNCH_ARGS = [
+  `--disable-extensions-except=${EXT}`,
+  `--load-extension=${EXT}`,
+  '--autoplay-policy=no-user-gesture-required',
+  '--mute-audio',
+]
+
+/** The extension's own options page. A content script's isolated world is
+ *  not reachable from page.evaluate, but an extension page is, and it has
+ *  the same chrome.runtime access the content script uses. */
+async function openExtensionPage(context: import('@playwright/test').BrowserContext) {
+  const serviceWorker =
+    context.serviceWorkers()[0] ?? (await context.waitForEvent('serviceworker', { timeout: 10_000 }))
+  const extensionId = new URL(serviceWorker.url()).host
+  const page = await context.newPage()
+  await page.goto(`chrome-extension://${extensionId}/options.html`)
+  return page
+}
+
+test('the service worker reaches the TTS server and returns playable audio', async () => {
+  const context = await chromium.launchPersistentContext('', {
+    headless: HEADLESS,
+    channel: CHANNEL,
+    args: TTS_LAUNCH_ARGS,
+  })
+
+  try {
+    const page = await openExtensionPage(context)
+
+    const health = await page.evaluate(() => chrome.runtime.sendMessage({ type: 'tts-health' }))
+    expect(health).toEqual({ ok: true })
+
+    const spoken = (await page.evaluate(() =>
+      chrome.runtime.sendMessage({
+        type: 'tts-speak',
+        text: 'Xin chào, đây là một component React.',
+      }),
+    )) as { audio?: string; duration?: number; error?: string }
+
+    expect(spoken.error).toBeUndefined()
+    expect(spoken.duration).toBeGreaterThan(0)
+    // The first six bytes of any WAV. Proves the base64 round trip through
+    // sendMessage's JSON serialisation preserved the bytes — the one thing
+    // spec 8.3 says cannot be taken for granted.
+    expect(atob(spoken.audio!.slice(0, 8)).startsWith('RIFF')).toBe(true)
+  } finally {
+    await context.close()
+  }
+})
+
+test('the page can play synthesised audio at the rate ceiling', async () => {
+  const context = await chromium.launchPersistentContext('', {
+    headless: HEADLESS,
+    channel: CHANNEL,
+    args: TTS_LAUNCH_ARGS,
+  })
+
+  try {
+    const page = await openExtensionPage(context)
+
+    const outcome = await page.evaluate(async () => {
+      const res = (await chrome.runtime.sendMessage({
+        type: 'tts-speak',
+        text: 'Xin chào.',
+      })) as { audio: string }
+
+      const binary = atob(res.audio)
+      const bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/wav' }))
+      const audio = new Audio(url)
+      audio.preservesPitch = true
+      audio.playbackRate = 1.4 // spec 6.2's ceiling — the worst case
+
+      return new Promise<string>((resolve) => {
+        audio.onended = () => resolve('ended')
+        audio.onerror = () => resolve('error')
+        setTimeout(() => resolve('timeout'), 8_000)
+        audio.play().catch((e: Error) => resolve(`blocked: ${e.name}`))
+      })
+    })
+
+    // Neither jsdom nor Node can exercise a real HTMLMediaElement, so this
+    // is the only place the actual playback path is proven.
+    expect(outcome).toBe('ended')
+  } finally {
+    await context.close()
+  }
+})

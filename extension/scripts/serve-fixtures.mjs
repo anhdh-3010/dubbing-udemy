@@ -27,8 +27,87 @@ const MIME = {
 // fixture page.
 const LECTURE_ROUTE = /^\/learn\/lecture\/\d+\/?$/
 
+// The extension only needs bytes that decode as audio and a duration header
+// it can trust — nothing here has to sound like speech. A quiet 220 Hz tone
+// is used rather than silence so anyone who plays the file can tell it
+// arrived intact.
+function wav(seconds, sampleRate = 24000) {
+  const samples = Math.round(seconds * sampleRate)
+  const buf = Buffer.alloc(44 + samples * 2)
+  buf.write('RIFF', 0)
+  buf.writeUInt32LE(36 + samples * 2, 4)
+  buf.write('WAVE', 8)
+  buf.write('fmt ', 12)
+  buf.writeUInt32LE(16, 16)
+  buf.writeUInt16LE(1, 20) // PCM
+  buf.writeUInt16LE(1, 22) // mono
+  buf.writeUInt32LE(sampleRate, 24)
+  buf.writeUInt32LE(sampleRate * 2, 28)
+  buf.writeUInt16LE(2, 32)
+  buf.writeUInt16LE(16, 34)
+  buf.write('data', 36)
+  buf.writeUInt32LE(samples * 2, 40)
+  for (let i = 0; i < samples; i++) {
+    buf.writeInt16LE(Math.round(Math.sin((2 * Math.PI * 220 * i) / sampleRate) * 8000), 44 + i * 2)
+  }
+  return buf
+}
+
+// Mirrors server/app.py's CORS policy. Not strictly needed — a service
+// worker fetch to a host in host_permissions is exempt from CORS — but
+// keeping the shapes identical means the stub fails the same way the real
+// server would if that ever stops being true.
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'content-type',
+  'Access-Control-Expose-Headers': 'X-Audio-Duration',
+}
+
 const server = createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://localhost')
+
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, CORS).end()
+    return
+  }
+
+  if (url.pathname === '/health') {
+    res
+      .writeHead(200, { 'Content-Type': 'application/json', ...CORS })
+      .end(JSON.stringify({ status: 'ok', model_loaded: true, stub: true }))
+    return
+  }
+
+  if (req.method === 'POST' && url.pathname === '/v1/audio/speech') {
+    let body = ''
+    req.on('data', (chunk) => {
+      body += chunk
+    })
+    req.on('end', () => {
+      let input = ''
+      try {
+        input = JSON.parse(body).input ?? ''
+      } catch {
+        // A malformed body yields the shortest clip rather than a 500 —
+        // this stub is not the thing under test.
+      }
+      // Proportional to the text so the scheduler's stretch maths has
+      // something varied to work on, and clamped so the run stays quick.
+      const seconds = Math.min(3, Math.max(0.2, input.length / 20))
+      const data = wav(seconds)
+      res
+        .writeHead(200, {
+          'Content-Type': 'audio/wav',
+          'Content-Length': data.length,
+          'X-Audio-Duration': seconds.toFixed(3),
+          ...CORS,
+        })
+        .end(data)
+    })
+    return
+  }
+
   const requested =
     url.pathname === '/' || LECTURE_ROUTE.test(url.pathname) ? '/lecture.html' : url.pathname
   const resolved = normalize(join(ROOT, requested))
