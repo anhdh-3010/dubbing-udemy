@@ -1,4 +1,10 @@
 import type { TTSProvider, Utterance } from '../core/types'
+// Shared with background.ts's message listener (as a type-only import,
+// erased at build time) for the same reason content.ts imports
+// TranslateResponse from there: one contract, checked by the compiler on
+// both sides, instead of two hand-written shapes that agree by convention
+// only until someone changes one of them.
+import type { TtsHealthResponse, TtsSpeakResponse } from '../entrypoints/background'
 import { createAudioPlayer, type AudioPlayer } from './audio-player'
 
 type SendMessage = (message: unknown) => Promise<unknown>
@@ -8,12 +14,6 @@ export interface VieNeuOptions {
    *  testable without an extension runtime. */
   send?: SendMessage
   createPlayer?: (wavBase64: string, duration: number) => AudioPlayer
-}
-
-interface SpeakReply {
-  audio?: string
-  duration?: number
-  error?: string
 }
 
 const abortError = (): DOMException => new DOMException('aborted', 'AbortError')
@@ -40,7 +40,7 @@ export class VieNeuProvider implements TTSProvider {
 
   async isAvailable(): Promise<boolean> {
     try {
-      const res = (await this.send({ type: 'tts-health' })) as { ok?: boolean } | undefined
+      const res = (await this.send({ type: 'tts-health' })) as TtsHealthResponse | undefined
       return res?.ok === true
     } catch {
       // sendMessage rejects when the service worker is recycled mid-request
@@ -70,7 +70,7 @@ export class VieNeuProvider implements TTSProvider {
   async prepare(text: string, signal: AbortSignal): Promise<Utterance> {
     if (signal.aborted) throw abortError()
 
-    const res = (await this.send({ type: 'tts-speak', text })) as SpeakReply | undefined
+    const res = (await this.send({ type: 'tts-speak', text })) as TtsSpeakResponse | undefined
     if (res?.error) throw new Error(res.error)
     if (typeof res?.audio !== 'string' || typeof res?.duration !== 'number') {
       throw new Error('TTS reply is malformed')
