@@ -2863,7 +2863,7 @@ Mở DevTools Console trên trang và tab service worker; chép lại mọi cả
 launchctl bootout "gui/$UID/com.udemy-dubbing.tts"
 ```
 
-Tải lại trang bài giảng. Expected: hiện thông báo `Chưa có giọng đọc: server TTS không chạy...`. Không được im lặng, và không được nói rằng giọng dự phòng sẽ được dùng.
+Tải lại trang bài giảng. Expected: **không phải** thông báo `Chưa có giọng đọc: server TTS không chạy...`. Chuỗi đó chỉ xuất hiện khi *cả hai* engine đều không dùng được, còn `launchctl bootout` chỉ hạ server — `WebSpeechProvider.isAvailable()` vẫn trả về `true` trên máy này kể cả khi đó (M1 xác nhận `getVoices()` liệt kê cả `Linh` lẫn `Linh (Nâng cao)`, xem `docs/superpowers/2026-09-20-m1-verification.md`), nên `provider.isAvailable()` của `FallbackProvider` vẫn trả `true` qua nhánh dự phòng. Thông báo thực sự sẽ tới từ `onStatusChange('fallback', ...)`, sẵn ở `content.ts`: "Server TTS ngừng trả lời. Giọng dự phòng của trình duyệt thường im lặng trên máy này — chạy lại server rồi tải lại trang." Hai thông điệp đều đúng, chỉ cho hai tình huống khác nhau: cái đầu cho khi không còn giọng nào cả, cái này cho khi Web Speech vẫn "có" nhưng trên máy này nó câm. Mục đích của bước vẫn không đổi — xác nhận extension nói ra điều có thật và có thể hành động được, chứ không im lặng và không bảo "giọng dự phòng sẽ được dùng" khi thực tế nó không phát ra tiếng gì.
 
 Bật lại:
 
