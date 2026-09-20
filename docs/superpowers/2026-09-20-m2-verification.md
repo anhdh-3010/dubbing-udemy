@@ -22,6 +22,7 @@ Hai câu hỏi treo từ M1 đã đóng được. Một mục quan trọng vẫn
 | Huỷ khi tua giữa câu (mục 6.4) | Tua giữa lúc đang đọc: tiếng tắt ngay, không đọc nốt, không đọc chồng |
 | **Đổi bài giảng không tải lại trang** | Bài mới tự lồng tiếng. Đây là câu hỏi M1 **chưa bao giờ xác nhận được** — Udemy dùng lại cùng một thẻ `<video>` giữa các bài, nên cơ chế `lectureChanged` là loại dễ hỏng âm thầm |
 | Thông báo khi server không chạy (mục 8.4, 10) | Tắt server rồi tải lại trang: hiện đúng câu *"Server TTS ngừng trả lời. Giọng dự phòng của trình duyệt thường im lặng trên máy này — chạy lại server rồi tải lại trang."* |
+| **Video không bị treo khi server tắt** | Với server đã tắt, **tiếng giảng viên nghe ở âm lượng bình thường**. Đây là bằng chứng thật duy nhất cho bản sửa lỗi Critical — xem mục dưới |
 
 ## Một dự đoán của review được thực tế xác nhận
 
@@ -34,19 +35,24 @@ lần chạy này.
 Thực tế khớp: thông báo hiện ra đúng là câu của `onStatusChange`, không phải câu
 plan viết ban đầu. Một lập luận thuần tuý trên code đã dự đoán đúng hành vi thật.
 
+## Lỗi Critical đã sửa, và đây là chỗ duy nhất chứng minh được
+
+Vòng review toàn nhánh phát hiện `WebSpeechProvider.play()` không có hạn chót. Vì
+`speechSynthesis` trên máy này không bắn sự kiện nào — không `onstart`, không
+`onend`, không `onerror` (M1 đã đo) — scheduler sẽ chờ mãi một câu không bao giờ
+kết thúc: `speaking` không bao giờ được xoá, `tick()` bỏ qua mọi lựa chọn từ đó trở
+đi, và âm gốc nằm ở 10% cho tới hết bài giảng. M1 vẫn ship code đó, nhưng M1 không có
+engine nào khác; chính `FallbackProvider` của M2 mới biến Web Speech thành đường chạy
+thật. Bản sửa thêm một watchdog để câu đọc luôn tự kết thúc.
+
+**Kiểm chứng bằng tai, với server đã tắt: tiếng giảng viên nghe bình thường.**
+Không kẹt ở âm lượng nhỏ. Bản sửa hoạt động.
+
+Không bài test nào dựng được cảnh này — 212 unit test và 3 e2e test đều không giả lập
+được một engine câm lặng trên chính máy này. Đây là lý do mốc nào cũng kết thúc bằng
+một lần chạy tay.
+
 ## Chưa xác nhận
-
-- **Video có hồi phục âm lượng khi server tắt hay không.** Đây là mục quan trọng
-  nhất còn thiếu. Vòng review cuối phát hiện `WebSpeechProvider.play()` không có
-  hạn chót: vì `speechSynthesis` trên máy này không bắn sự kiện nào, scheduler sẽ
-  chờ mãi một câu không bao giờ kết thúc và giữ âm gốc ở 10% cho tới hết bài giảng.
-  Bản sửa thêm một watchdog để nó luôn tự thoát.
-
-  Người kiểm chứng có mô tả "giọng video gốc bé hơn", nhưng câu đó đọc được theo hai
-  cách ngược nhau — ducking bình thường lúc server còn chạy, hay đúng triệu chứng của
-  lỗi lúc server đã tắt — và không làm rõ được trước khi phiên kết thúc. **Ghi là chưa
-  xác nhận.** Cách kiểm lại: tắt server, tải lại trang, nghe xem tiếng giảng viên có
-  ở âm lượng bình thường không.
 
 - **Video có bị làm chậm không** (tầng nén thứ ba của mục 6.2). Không để ý kỹ.
   Có thể đơn giản là các bản dịch đều vừa khung thời gian nên tầng này không phải
