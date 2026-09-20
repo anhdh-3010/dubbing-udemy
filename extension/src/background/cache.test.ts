@@ -3,11 +3,12 @@
 // environment has neither.
 import 'fake-indexeddb/auto'
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   DB_NAME,
   getAudio,
   getTranslations,
+  isCacheDisabled,
   putAudio,
   putTranslations,
   resetCacheState,
@@ -146,3 +147,159 @@ async function readLastUsed(store: string, key: string): Promise<number> {
 async function readField(store: string, key: string, field: string): Promise<unknown> {
   return (await readRow(store, key))[field]
 }
+
+describe('quota audio', () => {
+  it('dưới quota thì không xoá gì', async () => {
+    await putAudio('a1', wav(100), 1, 1000)
+    await putAudio('a2', wav(100), 1, 1000)
+    expect(await getAudio('a1')).not.toBeNull()
+    expect(await getAudio('a2')).not.toBeNull()
+  })
+
+  it('vượt quota thì xoá bản ghi ít dùng nhất trước', async () => {
+    await putAudio('oldest', wav(100), 1, 250)
+    await new Promise((r) => setTimeout(r, 5))
+    await putAudio('middle', wav(100), 1, 250)
+    await new Promise((r) => setTimeout(r, 5))
+    await putAudio('newest', wav(100), 1, 250)
+
+    expect(await getAudio('oldest')).toBeNull()
+    expect(await getAudio('middle')).not.toBeNull()
+    expect(await getAudio('newest')).not.toBeNull()
+  })
+
+  it('đọc một bản ghi làm nó thoát khỏi lượt dọn kế tiếp', async () => {
+    // This is the whole point of LRU over FIFO: a sentence the viewer keeps
+    // scrubbing back to must outlive one they played once and moved past.
+    await putAudio('a1', wav(100), 1, 250)
+    await new Promise((r) => setTimeout(r, 5))
+    await putAudio('a2', wav(100), 1, 250)
+    await new Promise((r) => setTimeout(r, 5))
+
+    await getAudio('a1') // a1 is now the most recently used, a2 the least
+    await new Promise((r) => setTimeout(r, 5))
+
+    await putAudio('a3', wav(100), 1, 250)
+
+    expect(await getAudio('a1')).not.toBeNull()
+    expect(await getAudio('a2')).toBeNull()
+  })
+
+  it('dọn vừa đủ để xuống dưới quota, không dọn sạch', async () => {
+    await putAudio('a1', wav(100), 1, 10_000)
+    await new Promise((r) => setTimeout(r, 5))
+    await putAudio('a2', wav(100), 1, 10_000)
+    await new Promise((r) => setTimeout(r, 5))
+    // 300 bytes total against a 250 quota: one row is enough.
+    await putAudio('a3', wav(100), 1, 250)
+
+    expect(await getAudio('a1')).toBeNull()
+    expect(await getAudio('a2')).not.toBeNull()
+    expect(await getAudio('a3')).not.toBeNull()
+  })
+
+  it('quota bằng 0 thì cache audio rỗng nhưng không nổ', async () => {
+    await putAudio('a1', wav(100), 1, 0)
+    expect(await getAudio('a1')).toBeNull()
+  })
+})
+
+describe('quota đọc từ chrome.storage.local', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('dùng giá trị người dùng đặt', async () => {
+    vi.stubGlobal('chrome', {
+      storage: { local: { get: async () => ({ cacheQuotaBytes: 250 }) } },
+    })
+    await putAudio('a1', wav(100), 1)
+    await new Promise((r) => setTimeout(r, 5))
+    await putAudio('a2', wav(100), 1)
+    await new Promise((r) => setTimeout(r, 5))
+    await putAudio('a3', wav(100), 1)
+
+    expect(await getAudio('a1')).toBeNull()
+    expect(await getAudio('a3')).not.toBeNull()
+  })
+
+  it('không có chrome thì lùi về mặc định 300 MB thay vì nổ', async () => {
+    // `chrome` is simply absent in this environment, so touching it raises a
+    // ReferenceError. That must land on the default, not on an exception:
+    // the cache has to work on the very first run, before any option exists.
+    await putAudio('a1', wav(100), 1)
+    expect(await getAudio('a1')).not.toBeNull()
+  })
+
+  it('giá trị rác trong storage thì lùi về mặc định', async () => {
+    vi.stubGlobal('chrome', {
+      storage: { local: { get: async () => ({ cacheQuotaBytes: 'ba trăm mê' }) } },
+    })
+    await putAudio('a1', wav(100), 1)
+    expect(await getAudio('a1')).not.toBeNull()
+  })
+})
+
+describe('trần số bản ghi bản dịch', () => {
+  it('vượt trần thì xoá bản ghi ít dùng nhất trước', async () => {
+    await putTranslations([{ key: 'k1', vi: 'một', srcText: 's1', lectureId: 'L' }], 2)
+    await new Promise((r) => setTimeout(r, 5))
+    await putTranslations([{ key: 'k2', vi: 'hai', srcText: 's2', lectureId: 'L' }], 2)
+    await new Promise((r) => setTimeout(r, 5))
+    await putTranslations([{ key: 'k3', vi: 'ba', srcText: 's3', lectureId: 'L' }], 2)
+
+    expect(await getTranslations(['k1'])).toEqual(new Map())
+    expect(await getTranslations(['k2', 'k3'])).toEqual(
+      new Map([
+        ['k2', 'hai'],
+        ['k3', 'ba'],
+      ]),
+    )
+  })
+
+  it('dưới trần thì không xoá gì', async () => {
+    await putTranslations(
+      [
+        { key: 'k1', vi: 'một', srcText: 's1', lectureId: 'L' },
+        { key: 'k2', vi: 'hai', srcText: 's2', lectureId: 'L' },
+      ],
+      10,
+    )
+    expect((await getTranslations(['k1', 'k2'])).size).toBe(2)
+  })
+})
+
+describe('đường lỗi của spec mục 9', () => {
+  /** Something IndexedDB refuses to structured-clone. It makes `put()` throw
+   *  synchronously, which is the cheapest faithful stand-in for the
+   *  QuotaExceededError this code path exists to survive — the behaviour
+   *  under test is "a write that fails", not the specific reason. */
+  const unwritable = (): ArrayBuffer => (() => undefined) as unknown as ArrayBuffer
+
+  it('ghi hỏng hai lần thì tắt cache cho phiên này, và không ném lỗi', async () => {
+    expect(isCacheDisabled()).toBe(false)
+    await expect(putAudio('bad', unwritable(), 1, 10_000)).resolves.toBeUndefined()
+    expect(isCacheDisabled()).toBe(true)
+  })
+
+  it('cache đã tắt thì mọi thao tác thành trượt, dữ liệu cũ vẫn nằm yên trên đĩa', async () => {
+    await putTranslations([{ key: 'k1', vi: 'còn đây', srcText: 's', lectureId: 'L' }])
+    await putAudio('bad', unwritable(), 1, 10_000)
+    expect(isCacheDisabled()).toBe(true)
+
+    expect(await getTranslations(['k1'])).toEqual(new Map())
+    expect(await getAudio('a1')).toBeNull()
+
+    // Nothing was deleted — a disabled cache stops being consulted, it does
+    // not destroy what it already holds.
+    resetCacheState()
+    expect(await getTranslations(['k1'])).toEqual(new Map([['k1', 'còn đây']]))
+  })
+
+  it('service worker khởi động lại thì cache bật lại', async () => {
+    await putAudio('bad', unwritable(), 1, 10_000)
+    expect(isCacheDisabled()).toBe(true)
+    resetCacheState()
+    expect(isCacheDisabled()).toBe(false)
+  })
+})

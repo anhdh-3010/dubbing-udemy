@@ -15,6 +15,13 @@
  *    transaction, and only then reads `request.result`.
  */
 
+import {
+  DEFAULT_AUDIO_QUOTA_BYTES,
+  TRANSLATION_MAX_ENTRIES,
+  planEvictions,
+  type LruEntry,
+} from '../core/cache-policy'
+
 export const DB_NAME = 'udemy-dubbing'
 export const DB_VERSION = 1
 
@@ -51,6 +58,18 @@ interface AudioRow {
 
 let dbPromise: Promise<IDBDatabase> | null = null
 
+/** After a write fails, the cache clears itself down to this fraction of the
+ *  quota before retrying — enough headroom that the retry is not fighting for
+ *  the last byte, while still keeping most of what the cache holds. */
+const RETRY_TARGET_RATIO = 0.8
+
+/** Set when a write has failed twice in a row. Spec 9's last step: run
+ *  without a cache rather than reporting an error. Module-level, so it lasts
+ *  exactly as long as this service worker does — a restart tries again. */
+let disabled = false
+
+let quotaMemo: number | null = null
+
 /**
  * Drops every in-memory handle, which is precisely what happens when MV3
  * terminates the service worker. Tests use it to simulate that; nothing in
@@ -58,6 +77,15 @@ let dbPromise: Promise<IDBDatabase> | null = null
  */
 export function resetCacheState(): void {
   dbPromise = null
+  disabled = false
+  quotaMemo = null
+}
+
+/** Whether spec 9's last resort is in force. M3b's control panel reports
+ *  this; it is the difference between "the cache is cold" and "the cache
+ *  gave up". */
+export function isCacheDisabled(): boolean {
+  return disabled
 }
 
 function done(tx: IDBTransaction): Promise<void> {
@@ -117,6 +145,7 @@ function openDb(): Promise<IDBDatabase> {
 }
 
 async function withDb<T>(fallback: T, fn: (db: IDBDatabase) => Promise<T>): Promise<T> {
+  if (disabled) return fallback
   try {
     return await fn(await openDb())
   } catch (e) {
@@ -163,6 +192,103 @@ async function touch<T extends object>(
   }
 }
 
+/**
+ * The cache's rows in least-recently-used order, with what deleting each one
+ * would free.
+ *
+ * `openKeyCursor` — not `openCursor` — is what makes this affordable: it
+ * yields the index key and the primary key without reading the row, so
+ * walking a 300 MB audio store never loads a single byte of audio. This
+ * property is protected by review, not by a test: Task 3's mutation check
+ * swapped in `openCursor()` and the suite stayed green, because no test
+ * pins "does not load the value" — only the LRU ordering. Carried forward
+ * to Task 8's ledger as a constraint that review must keep enforcing.
+ */
+function readLru(
+  db: IDBDatabase,
+  store: string,
+  index: string,
+  costOf: (indexKey: IDBValidKey) => number,
+): Promise<LruEntry[]> {
+  return new Promise((resolve, reject) => {
+    const entries: LruEntry[] = []
+    const tx = db.transaction(store, 'readonly')
+    const req = tx.objectStore(store).index(index).openKeyCursor()
+    req.onsuccess = () => {
+      const cursor = req.result
+      if (cursor === null) return // walk finished; tx.oncomplete resolves
+      entries.push({ key: String(cursor.primaryKey), cost: costOf(cursor.key) })
+      cursor.continue()
+    }
+    req.onerror = () => reject(req.error ?? new Error('LRU cursor failed'))
+    tx.oncomplete = () => resolve(entries)
+    tx.onerror = () => reject(tx.error ?? new Error('LRU transaction failed'))
+    tx.onabort = () => reject(tx.error ?? new Error('LRU transaction aborted'))
+  })
+}
+
+async function deleteKeys(db: IDBDatabase, store: string, keys: readonly string[]): Promise<void> {
+  if (keys.length === 0) return
+  const tx = db.transaction(store, 'readwrite')
+  const os = tx.objectStore(store)
+  for (const key of keys) os.delete(key)
+  await done(tx)
+}
+
+/** Brings the audio store down to `limit` bytes. The total comes from the
+ *  same cursor walk that picks the victims, so there is no stored total to
+ *  drift out of step with what is actually on disk. */
+async function enforceAudioLimit(db: IDBDatabase, limit: number): Promise<void> {
+  const entries = await readLru(db, AUDIO, 'lru', (key) => Number((key as [number, number])[1]))
+  const total = entries.reduce((sum, e) => sum + e.cost, 0)
+  const { keys } = planEvictions(entries, total, limit)
+  await deleteKeys(db, AUDIO, keys)
+}
+
+async function enforceTranslationLimit(db: IDBDatabase, maxEntries: number): Promise<void> {
+  const tx = db.transaction(TRANSLATIONS, 'readonly')
+  const countReq = tx.objectStore(TRANSLATIONS).count()
+  await done(tx)
+  const count = countReq.result
+  // The common case by far. Short-circuiting here keeps the cursor walk off
+  // the path that every translated batch takes.
+  if (count <= maxEntries) return
+
+  const entries = await readLru(db, TRANSLATIONS, 'lastUsed', () => 1)
+  const { keys } = planEvictions(entries, count, maxEntries)
+  await deleteKeys(db, TRANSLATIONS, keys)
+}
+
+/** Spec 9's "hạn mức cấu hình được", read once per service-worker lifetime.
+ *  `chrome` may not exist at all (tests, and any non-extension context), so
+ *  touching it can raise a ReferenceError — which is caught here rather than
+ *  allowed to make a first run fail. */
+async function audioQuotaBytes(): Promise<number> {
+  if (quotaMemo !== null) return quotaMemo
+  try {
+    const { cacheQuotaBytes } = await chrome.storage.local.get('cacheQuotaBytes')
+    quotaMemo =
+      typeof cacheQuotaBytes === 'number' && Number.isFinite(cacheQuotaBytes) && cacheQuotaBytes >= 0
+        ? cacheQuotaBytes
+        : DEFAULT_AUDIO_QUOTA_BYTES
+  } catch {
+    quotaMemo = DEFAULT_AUDIO_QUOTA_BYTES
+  }
+  return quotaMemo
+}
+
+async function writeAudioRow(
+  db: IDBDatabase,
+  key: string,
+  wav: ArrayBuffer,
+  duration: number,
+): Promise<void> {
+  const tx = db.transaction(AUDIO, 'readwrite')
+  const value: AudioRow = { wav, duration, bytes: wav.byteLength, lastUsed: Date.now() }
+  tx.objectStore(AUDIO).put(value, key)
+  await done(tx)
+}
+
 export async function getTranslations(
   keys: readonly string[],
 ): Promise<Map<string, string>> {
@@ -190,7 +316,10 @@ export async function getTranslations(
   })
 }
 
-export async function putTranslations(rows: readonly TranslationInput[]): Promise<void> {
+export async function putTranslations(
+  rows: readonly TranslationInput[],
+  maxEntries: number = TRANSLATION_MAX_ENTRIES,
+): Promise<void> {
   if (rows.length === 0) return
   await withDb(undefined, async (db) => {
     const tx = db.transaction(TRANSLATIONS, 'readwrite')
@@ -206,6 +335,7 @@ export async function putTranslations(rows: readonly TranslationInput[]): Promis
       os.put(value, row.key)
     }
     await done(tx)
+    await enforceTranslationLimit(db, maxEntries)
   })
 }
 
@@ -223,11 +353,33 @@ export async function getAudio(key: string): Promise<CachedAudio | null> {
   })
 }
 
-export async function putAudio(key: string, wav: ArrayBuffer, duration: number): Promise<void> {
+export async function putAudio(
+  key: string,
+  wav: ArrayBuffer,
+  duration: number,
+  quotaBytes?: number,
+): Promise<void> {
   await withDb(undefined, async (db) => {
-    const tx = db.transaction(AUDIO, 'readwrite')
-    const value: AudioRow = { wav, duration, bytes: wav.byteLength, lastUsed: Date.now() }
-    tx.objectStore(AUDIO).put(value, key)
-    await done(tx)
+    // Read before any transaction opens: awaiting a non-IDB promise with a
+    // transaction in flight is what silently kills it.
+    const quota = quotaBytes ?? (await audioQuotaBytes())
+
+    try {
+      await writeAudioRow(db, key, wav, duration)
+    } catch (first) {
+      // Spec 9, in order: clear LRU, retry exactly once, then run without a
+      // cache rather than reporting an error.
+      console.warn('[udemy-dubbing] cache: audio write failed, clearing LRU', first)
+      try {
+        await enforceAudioLimit(db, Math.floor(quota * RETRY_TARGET_RATIO))
+        await writeAudioRow(db, key, wav, duration)
+      } catch (second) {
+        console.warn('[udemy-dubbing] cache: disabled for this session', second)
+        disabled = true
+        return
+      }
+    }
+
+    await enforceAudioLimit(db, quota)
   })
 }
