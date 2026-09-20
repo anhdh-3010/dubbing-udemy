@@ -64,8 +64,4 @@ export class FakeTTS implements TTSProvider {
     this.prepared.push(u)
     return u
   }
-
-  get last(): FakeUtterance | undefined {
-    return this.prepared[this.prepared.length - 1]
-  }
 }
