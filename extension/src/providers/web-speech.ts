@@ -3,9 +3,10 @@ import type { TTSProvider, Utterance } from '../core/types'
 
 const LANG = 'vi-VN'
 
-/** macOS ships the enhanced Vietnamese voice under a localised name —
- *  "Linh (Enhanced)" in English, "Linh (Nâng cao)" in Vietnamese — so the
- *  qualifier has to be matched in both. */
+/** macOS localises the enhanced voice's qualifier; only "Linh (Nâng cao)" has
+ *  been observed, on this machine (see
+ *  docs/superpowers/2026-09-20-m1-verification.md). "enhanced" and "premium"
+ *  are matched speculatively for other locales, not from observation. */
 const ENHANCED_VOICE = /enhanced|premium|nâng cao/i
 
 /**
