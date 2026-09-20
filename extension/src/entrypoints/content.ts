@@ -1,3 +1,4 @@
+import { applyTranslations } from '../core/apply-translations'
 import { planBatches } from '../core/batching'
 import { FallbackProvider } from '../core/fallback'
 import { Scheduler } from '../core/scheduler'
@@ -9,7 +10,7 @@ import { cuesFromTextTracks, cuesFromTextTracksWhenReady } from '../player/capti
 import { createPlayerBridge, lectureIdFromUrl } from '../player/player-bridge'
 import { VieNeuProvider } from '../providers/vieneu'
 import { WebSpeechProvider } from '../providers/web-speech'
-import type { TranslateResponse } from './background'
+import type { CacheLookupResponse, TranslateResponse } from './background'
 
 /** Cheap fingerprint of a cue list: count plus first/last text is enough to
  *  tell "the tracks still show what they showed a moment ago" from "the
@@ -153,16 +154,50 @@ export default defineContentScript({
       return accept(fallback) ? fallback : []
     }
 
+    /** Fills in whatever the cache already knows, before a single batch is sent
+     *  to the LLM. Segments it fills are marked 'ready', and `planBatches`
+     *  filters those out — so a lecture watched before costs nothing, and a
+     *  half-watched one sends smaller batches.
+     *
+     *  Failure here is free: every segment simply stays pending and gets
+     *  translated the way it would have without a cache. */
+    const applyCache = async (segs: Segment[], gen: number): Promise<void> => {
+      try {
+        const res = (await chrome.runtime.sendMessage({
+          type: 'cache-lookup',
+          segments: segs.map((s) => ({ id: s.id, srcText: s.srcText })),
+        })) as CacheLookupResponse
+        // The viewer may have moved on during the round trip; writing into this
+        // lecture's segments now would be writing into the wrong lecture.
+        if (gen !== generation) return
+        applyTranslations(segs, res?.translations ?? [])
+      } catch (e) {
+        // sendMessage rejects outright when the service worker is recycled
+        // mid-request. A missed lookup costs money and a few seconds, never
+        // correctness.
+        console.warn('[udemy-dubbing] cache-lookup:', e)
+      }
+    }
+
     /** Translates every pending batch for one lecture. `segs` is bound at
      *  call time, not read from an enclosing closure: by the time a
      *  `sendMessage` round trip resolves, the viewer may already be on a
      *  different lecture, and a closure variable would then refer to *that*
      *  one. `gen` is what actually detects the switch and stops. */
-    const translateAll = async (video: HTMLVideoElement, segs: Segment[], gen: number): Promise<void> => {
+    const translateAll = async (
+      video: HTMLVideoElement,
+      segs: Segment[],
+      gen: number,
+      lectureId: string,
+    ): Promise<void> => {
       for (const batch of planBatches(segs, video.currentTime)) {
         let res: TranslateResponse
         try {
-          res = (await chrome.runtime.sendMessage({ type: 'translate', batch })) as TranslateResponse
+          res = (await chrome.runtime.sendMessage({
+            type: 'translate',
+            batch,
+            lectureId,
+          })) as TranslateResponse
         } catch (e) {
           // chrome.runtime.sendMessage rejects — rather than resolving to an
           // error payload — when the service worker is recycled mid-request
@@ -184,16 +219,10 @@ export default defineContentScript({
           if (res.fatal) return
           continue
         }
-        for (const [id, vi] of res?.translations ?? []) {
-          const seg = segs.find((s) => s.id === id)
-          if (seg) {
-            seg.viText = vi
-            seg.status = 'ready'
-          }
-        }
+        applyTranslations(segs, res?.translations ?? [])
         // The scheduler already holds `segs` by reference (set once in
-        // attach()), and these entries were mutated in place above, so
-        // there is nothing further to hand it here.
+        // attach()), and these entries were mutated in place above, so there is
+        // nothing further to hand it here.
       }
     }
 
@@ -226,7 +255,8 @@ export default defineContentScript({
       // by anything. Everything this function does, including the
       // attachedLectureId bookkeeping, stays inside this try.
       try {
-        attachedLectureId = lectureIdFromUrl(window.location.href)
+        const lectureId = lectureIdFromUrl(window.location.href)
+        attachedLectureId = lectureId
         const cues = await loadCues(video, accept)
         if (gen !== generation) return // the viewer already left this lecture
 
@@ -259,6 +289,13 @@ export default defineContentScript({
 
         const segs = mergeCues(cues)
 
+        // Before the scheduler starts, not after: on a lecture that is
+        // already cached this is what lets the very first sentence speak
+        // immediately instead of waiting out an LLM round trip. It costs one
+        // message round trip on a cold cache.
+        await applyCache(segs, gen)
+        if (gen !== generation) return
+
         // Belt-and-suspenders: teardown() should already have stopped and
         // cleared any previous scheduler before this generation started, but
         // a scheduler must never be replaced without stopping the one it
@@ -272,7 +309,7 @@ export default defineContentScript({
         cancelAnimationFrame(rafId)
         rafId = requestAnimationFrame(loop)
 
-        void translateAll(video, segs, gen).catch((e) => {
+        void translateAll(video, segs, gen, lectureId ?? '').catch((e) => {
           // The per-batch sendMessage rejection (service worker recycled
           // mid-request, port closed) is now caught and skipped inside
           // translateAll's loop, so it no longer reaches here. This backstop
