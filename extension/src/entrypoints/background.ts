@@ -147,7 +147,17 @@ export default defineBackground(() => {
             // worker as soon as sendResponse returns, and a write started
             // after that is a write that can be lost. Costs a few
             // milliseconds.
-            await cacheTranslations(msg.batch, map, msg.lectureId)
+            //
+            // Isolated in its own try/catch, deliberately: this batch was
+            // already paid for with a real API call, so a cache-write
+            // failure (e.g. key derivation blowing up) must never turn a
+            // successful translation into an error for the viewer. It
+            // degrades to "not cached this time", not to "not translated".
+            try {
+              await cacheTranslations(msg.batch, map, msg.lectureId)
+            } catch (cacheError) {
+              console.warn('[udemy-dubbing] cache write failed:', cacheError)
+            }
             respond({ translations: Array.from(map.entries()) })
           } catch (e) {
             // A rejected key, or any other permanent error (e.g. a retired

@@ -181,4 +181,20 @@ describe('ghi cache khi dịch', () => {
     await send({ type: 'translate', batch, lectureId: 'L1' })
     expect(putTranslations).not.toHaveBeenCalled()
   })
+
+  it('cache ghi lỗi thì vẫn trả lời với bản dịch, không phải error', async () => {
+    // The Gemini call underneath this batch already succeeded — that API
+    // call has been paid for — by the time the cache write is attempted. A
+    // write failure here must not throw the successful translation away and
+    // report an error instead; the viewer must still get their dub.
+    putTranslations.mockRejectedValueOnce(new Error('IndexedDB is on fire'))
+
+    const res = await send({ type: 'translate', batch, lectureId: 'L1' })
+
+    expect(res).toEqual({ translations: [[1, 'xin chào']] })
+    // The rejected call never reaches the `calls.push('putTranslations')`
+    // inside the mock's own implementation, so only sendResponse is
+    // recorded — the reply still goes out despite the cache failure.
+    expect(calls).toEqual(['sendResponse'])
+  })
 })
