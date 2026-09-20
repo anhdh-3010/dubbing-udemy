@@ -40,6 +40,10 @@ export class FakeTTS implements TTSProvider {
   readonly name = 'fake'
   readonly knowsDurationAhead = true
   readonly prepared: FakeUtterance[] = []
+  /** Every text prepare() was asked for, in order. Counting utterances is
+   *  not enough once the scheduler prepares ahead: the question becomes
+   *  *which* sentence was prepared, not how many. */
+  readonly texts: string[] = []
 
   /** Seconds of speech to report for any text. */
   constructor(
@@ -52,6 +56,7 @@ export class FakeTTS implements TTSProvider {
   }
 
   async prepare(text: string): Promise<Utterance> {
+    this.texts.push(text)
     if (this.prepareDelayMs > 0) {
       await new Promise((resolve) => setTimeout(resolve, this.prepareDelayMs))
     }

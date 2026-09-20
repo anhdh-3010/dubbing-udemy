@@ -11,6 +11,18 @@ export interface SchedulerOptions {
 /** A segment whose start is further behind than this is skipped, not chased. */
 const MAX_LATENESS = 1.5
 
+/** How far ahead of the playhead a sentence may be synthesised, in seconds
+ *  of video time. Spec 6.5: exactly one sentence is held at a time, so this
+ *  only decides how early that one may start. */
+const PREFETCH_LEAD = 10
+
+/** A sentence being synthesised ahead of its slot. */
+interface Prefetched {
+  id: number
+  controller: AbortController
+  promise: Promise<Utterance>
+}
+
 export class Scheduler {
   private readonly video: VideoLike
   private readonly provider: TTSProvider
@@ -36,6 +48,8 @@ export class Scheduler {
   private lastWrittenRate: number | null = null
   /** The AbortController of a prepare() that has not resolved yet. */
   private preparing: AbortController | null = null
+  /** The one sentence prepared ahead of its slot, if any (spec 6.5). */
+  private prefetched: Prefetched | null = null
 
   constructor(opts: SchedulerOptions) {
     this.video = opts.video
@@ -84,7 +98,13 @@ export class Scheduler {
 
   /** Drives one frame. The content script calls this from requestAnimationFrame. */
   async tick(): Promise<void> {
-    if (this.stopped || this.starting || this.speaking !== null || this.video.paused) return
+    if (this.stopped || this.video.paused) return
+
+    // Ahead of the guards below on purpose: the time to prepare the next
+    // sentence is precisely while the current one is being spoken.
+    this.maybePrefetch()
+
+    if (this.starting || this.speaking !== null) return
 
     const now = this.video.currentTime
     const index = this.segments.findIndex(
@@ -112,23 +132,75 @@ export class Scheduler {
     }
   }
 
+  private maybePrefetch(): void {
+    const held = this.prefetched
+    if (held !== null) {
+      // tick() marks a segment spoken when it skips one — too late, or not
+      // translated yet — and a prefetch for such a segment will never be
+      // consumed by anything.
+      if (this.spoken.has(held.id)) this.discardPrefetch()
+      else return
+    }
+
+    const now = this.video.currentTime
+    const next = this.segments.find(
+      (s): s is Segment & { viText: string } =>
+        isReady(s) && !this.spoken.has(s.id) && s.start > now && s.start - now <= PREFETCH_LEAD,
+    )
+    if (next === undefined) return
+
+    const generation = this.generation
+    const controller = new AbortController()
+    const entry: Prefetched = {
+      id: next.id,
+      controller,
+      promise: this.provider.prepare(next.viText, controller.signal),
+    }
+    this.prefetched = entry
+
+    entry.promise.then(
+      (utterance) => {
+        // Consumed by speak(), or already discarded — either way not ours.
+        if (this.prefetched !== entry) return
+        if (generation !== this.generation) {
+          // A seek landed while this was in flight. It belongs to a position
+          // the viewer has left, and the real provider is holding a blob URL
+          // that leaks unless somebody releases it.
+          this.prefetched = null
+          utterance.cancel()
+        }
+      },
+      () => {
+        // Synthesis failed. Forget it rather than remembering the failure:
+        // speak() will try live when the slot arrives, and FallbackProvider
+        // has already recorded what this means for engine health.
+        if (this.prefetched === entry) this.prefetched = null
+      },
+    )
+  }
+
+  private discardPrefetch(): void {
+    const held = this.prefetched
+    if (held === null) return
+    this.prefetched = null
+    held.controller.abort()
+    held.promise.then(
+      (utterance) => utterance.cancel(),
+      () => {
+        // Already failed; nothing to release.
+      },
+    )
+  }
+
   private async speak(
     segment: Segment & { viText: string },
     next: Segment | undefined,
     now: number,
   ): Promise<void> {
     const generation = this.generation
-    const controller = new AbortController()
-    let utterance: Utterance
-
-    this.preparing = controller
-    try {
-      utterance = await this.provider.prepare(segment.viText, controller.signal)
-    } catch {
-      return
-    } finally {
-      if (this.preparing === controller) this.preparing = null
-    }
+    const taken = await this.take(segment)
+    if (taken === null) return
+    const { utterance, controller } = taken
 
     if (generation !== this.generation) {
       // A seek or a stop landed while the provider was preparing. This speech
@@ -166,6 +238,37 @@ export class Scheduler {
       })
   }
 
+  /** The utterance for this segment: the one prepared ahead if it is the
+   *  right one, otherwise a fresh synthesis. Null when preparation failed —
+   *  the slot then plays the original audio at full volume (spec 10).
+   *
+   *  Returns the controller alongside the utterance, not just the utterance:
+   *  `speaking` needs it (see cancelCurrent()), and it differs depending on
+   *  whether this call reused a prefetch or started a fresh prepare(). */
+  private async take(
+    segment: Segment & { viText: string },
+  ): Promise<{ utterance: Utterance; controller: AbortController } | null> {
+    const held = this.prefetched
+    const usable = held !== null && held.id === segment.id ? held : null
+    if (usable !== null) this.prefetched = null
+
+    // A prefetch for a *different* segment is left alone: find() always
+    // returns the nearest upcoming sentence, so it is the next one, not a
+    // stale one.
+    const controller = usable?.controller ?? new AbortController()
+    const promise = usable?.promise ?? this.provider.prepare(segment.viText, controller.signal)
+
+    this.preparing = controller
+    try {
+      const utterance = await promise
+      return { utterance, controller }
+    } catch {
+      return null
+    } finally {
+      if (this.preparing === controller) this.preparing = null
+    }
+  }
+
   private setRate(rate: number): void {
     // An assignment that changes nothing fires no ratechange, so it must not
     // leave a claim behind for a later genuine change to match.
@@ -183,6 +286,11 @@ export class Scheduler {
 
   private cancelCurrent(): void {
     this.preparing?.abort()
+    // Pausing throws away a prepared sentence too, so resuming re-synthesises
+    // it — about half a second on the real provider. Keeping it across a
+    // pause would mean tracking whether the viewer resumed at the same place,
+    // which is not worth half a second.
+    this.discardPrefetch()
     if (this.speaking === null) return
     this.speaking.controller.abort()
     this.speaking.utterance.cancel()
