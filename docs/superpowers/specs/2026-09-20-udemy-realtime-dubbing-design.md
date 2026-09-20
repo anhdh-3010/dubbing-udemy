@@ -342,7 +342,7 @@ Một điều phải nói thẳng trong giao diện: M1 đã chứng minh `speec
 
 IndexedDB, do service worker sở hữu.
 
-- **Bản dịch** khóa theo `lectureId + captionLang + targetLang + model`. Xem lại một bài giảng không tốn gì.
+- **Bản dịch** khóa theo **hash nội dung câu gốc**, cộng ngôn ngữ đích, model và phiên bản prompt. Không khóa theo `lectureId + id`: `Segment.id` là chỉ số mảng do `mergeCues` sinh ra, nên khóa theo id sẽ trả bản dịch của câu này gán cho câu khác ngay khi thuật toán gộp đổi hoặc Udemy sửa file `.vtt` — sai một cách im lặng, là dạng hỏng tệ nhất ở đây. Khóa theo nội dung làm chuyện đó bất khả thi: đổi cách gộp thì **trượt** cache chứ không **trúng nhầm**. `lectureId` vẫn lưu trên từng bản ghi, để dọn và để hiển thị. Xem lại một bài giảng vẫn không tốn gì, và câu lặp lại trong cả khóa học dùng chung một bản dịch.
 - **Audio** khóa theo `hash của segment + giọng + steps`, dọn theo LRU trong hạn mức cấu hình được.
 - Khi hết hạn mức: dọn LRU, thử lại một lần, rồi chạy không cache thay vì báo lỗi.
 
