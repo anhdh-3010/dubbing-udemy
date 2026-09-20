@@ -242,8 +242,13 @@ export default defineContentScript({
           // Both engines are out. Saying "the browser fallback will be used"
           // here would be a lie by omission: on this machine
           // speechSynthesis.speak() produces nothing at all, so the honest
-          // message names the thing that can actually be fixed.
+          // message names the thing that can actually be fixed. Spec 10's
+          // row for this case is "báo trong bảng điều khiển, tắt lồng
+          // tiếng, để video yên" — building the scheduler below would duck
+          // the original audio and touch playbackRate on every sentence
+          // with nothing to speak, forever.
           showNotice('Chưa có giọng đọc: server TTS không chạy. Chạy server/install-agent.sh rồi tải lại trang.')
+          return
         } else if (provider.status === 'primary') {
           // Not awaited. The server needs about 4.3s to load the model and
           // another ~1.8s for its first inference; the point is to spend

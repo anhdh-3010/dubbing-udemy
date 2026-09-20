@@ -244,4 +244,31 @@ describe('WebSpeechProvider', () => {
 
     expect((spoken[0].voice as { name: string }).name).toBe('Linh')
   })
+
+  it('engine im lặng hoàn toàn (không onstart/onend/onerror): watchdog vẫn resolve', async () => {
+    // Exactly the M1 verification failure: speechSynthesis.speak() fires no
+    // event at all. Without a deadline this promise never settles, and the
+    // scheduler that awaits play() wedges permanently (spec 10).
+    vi.useFakeTimers()
+    try {
+      installFakeSpeech()
+      const p = new WebSpeechProvider()
+      const before = p.charsPerSecond
+      const u = await p.prepare('x'.repeat(100), new AbortController().signal)
+      const done = u.play(1)
+
+      // No spoken[0].onstart/onend/onerror is ever invoked here — that is
+      // the point. Advance well past the watchdog deadline
+      // (duration * ESTIMATE_SAFETY_FACTOR + grace).
+      await vi.advanceTimersByTimeAsync(60_000)
+
+      await expect(done).resolves.toBeUndefined()
+      // A watchdog-terminated reading never really happened, so it must not
+      // be fed to the estimator — same reasoning as the cancelled-mid-
+      // sentence case above.
+      expect(p.charsPerSecond).toBe(before)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
