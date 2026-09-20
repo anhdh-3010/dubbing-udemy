@@ -204,6 +204,18 @@ Khi bắt đầu đọc, `video.volume` giảm dần xuống mức cấu hình (
 | Người dùng đổi tốc độ | Ghi nhận làm `baseline` mới; tính lại từ đó |
 | Đổi bài | Tháo dỡ hoàn toàn rồi dựng lại |
 
+### 6.5 Tổng hợp trước con trỏ phát
+
+M1 gọi `prepare()` đúng vào khoảnh khắc câu bắt đầu. Với Web Speech việc đó gần như tức thời nên không lộ ra vấn đề gì. Với VieNeu thì có: mỗi câu tốn chừng 0.8 giây từ lúc gọi tới lúc có audio trong tay — 0.63s suy luận cho một câu 6 giây, cộng HTTP, base64 và giải mã. Giữ nguyên cách gọi đó thì **mọi** câu đều vào trễ chừng ấy, và vì mục 6.2 tính ngân sách từ `max(segment.start, now)` nên cái trễ lập tức biến thành tốc độ đọc cao hơn và video bị làm chậm thường xuyên — một khuyết tật đều đặn, không phải sự cố thỉnh thoảng.
+
+Scheduler vì thế chuẩn bị trước **đúng một câu**: trong lúc đọc câu N, nếu câu kế tiếp đã dịch xong và bắt đầu trong vòng `PREFETCH_LEAD = 10` giây theo thời gian video, thì gọi `prepare()` cho nó ngay. Tới lượt, câu đó đã có sẵn `Utterance` và chỉ việc phát.
+
+Đúng một câu, không sâu hơn. RTF 0.105 nghĩa là tổng hợp nhanh gấp mười lần thời gian thực, nên một bước đã dư sức bám kịp con trỏ phát; chuẩn bị sâu hơn chỉ nhân số câu bị vứt đi mỗi lần tua lên, và làm việc hủy bỏ rắc rối thêm mà không mua được gì.
+
+Phần chuẩn bị trước chịu cùng generation counter với phần đang đọc: tua, tạm dừng, đổi bài đều hủy nó.
+
+**Nạp nguội.** Lần tổng hợp đầu tiên sau khi server khởi động tốn thêm 4.3 giây nạp model. Mục 8 viết rằng quãng đó "trùng với lô dịch đầu tiên nên không cảm thấy" — điều đó chỉ đúng nếu có ai chủ động kích hoạt nó. Nên khi gắn vào một bài giảng, extension gửi một request tổng hợp bé và vứt kết quả đi.
+
 ## 7. Xử lý thuật ngữ IT
 
 Bản dịch **giữ nguyên thuật ngữ IT bằng tiếng Anh**. Prompt yêu cầu dịch phần văn xuôi sang tiếng Việt tự nhiên, nhưng không đụng vào tên công nghệ, tên thư viện, từ khóa ngôn ngữ, và những thuật ngữ mà lập trình viên Việt vốn dùng nguyên gốc.
@@ -250,6 +262,8 @@ OMP_NUM_THREADS=2 PORT=8770 HOST=127.0.0.1 python app.py
 `HOST=127.0.0.1` là bắt buộc chứ không phải mặc định tiện tay: nó giữ server trên loopback, đúng điều kiện mà miễn trừ mixed-content ở mục 4.2 dựa vào, và không để bất cứ thứ gì ngoài máy với tới.
 
 **Docker vẫn dùng được, chỉ không phải mặc định.** `server/Dockerfile` và `docker-compose.yml` đã build và chạy thật, publish cổng ra `127.0.0.1:8770`, mount cache HuggingFace của host vào `/models` nên image 1.45GB không phải cõng thêm 269MB trọng số. Lý do không chọn: nó chậm hơn 2.7 lần trong khi thứ nó bán — môi trường tái lập, dễ chuyển máy — lại không được tiêu thụ trên một máy phục vụ một người. Khi nào cần dựng trên máy khác hoặc muốn gỡ sạch không để lại Python trên hệ thống thì nó đáng giá ngay.
+
+**Mặc định phải là loopback, không phải `0.0.0.0`.** Bản `app.py` viết ở M1 đọc `HOST` từ môi trường và mặc định `0.0.0.0`, nghĩa là chạy `python app.py` tay — không set biến nào — sẽ mở server ra mọi interface. Đó đúng là thứ mục 4.2 bảo không được làm, và nó chỉ an toàn chừng nào người chạy nhớ set biến. Mặc định đổi thành `127.0.0.1`; ai muốn mở rộng thì phải nói ra.
 
 **Số đo thật, không phải ước tính.** Bản thiết kế trước viết rằng Colima "không bị phạt nặng" vì là VM arm64 không giả lập kiến trúc. **Điều đó sai.** Đo trên cùng một đoạn 17.2 giây audio, cùng model Nano 8 bước, và — quan trọng — qua **đúng cùng một file `app.py`** để không lẫn tạp chất:
 
@@ -299,6 +313,31 @@ Kết luận đã sửa: **VieNeu chạy WASM nhiều khả năng khả thi, ch�
 
 Nếu spike đó thành công thì `WasmProvider` xoá luôn nhu cầu server, và `TTSProvider` đã sẵn interface để cắm vào mà không đụng phần lõi. Nếu thất bại ở bước 1 hoặc 3, đường lùi vẫn là model định dạng Piper `CSA v3` (74MB, RTF 0.061) — thấp hơn một bậc về chất lượng nhưng chắc chắn chạy được.
 
+### 8.3 Audio đi từ server tới tai người nghe bằng đường nào
+
+Mục 4.1 đã chốt request phải phát đi từ service worker. Lý do ghi ở đó là CSP của trang; còn một lý do nữa mạnh hơn: nếu nới CORS của server cho `https://lg.udemy.com` để content script gọi thẳng, thì **mọi** script chạy trên trang Udemy — kể cả script bên thứ ba mà Udemy nhúng — đều gọi được server TTS trên máy này. Giữ `Access-Control-Allow-Origin` chỉ nhận `chrome-extension://` là một ranh giới thật chứ không phải thủ tục.
+
+Hệ quả là audio phải vượt ranh giới process:
+
+```
+service worker:  POST /v1/audio/speech → WAV bytes + X-Audio-Duration
+                 → base64
+                 → chrome.runtime.sendMessage
+content script:  → Blob → blob: URL → HTMLAudioElement
+```
+
+`chrome.runtime.sendMessage` serialize bằng JSON chứ không phải structured clone, nên `ArrayBuffer` không sống sót qua đó. Base64 là ràng buộc, không phải một lựa chọn trong hai. Cái giá: 24 kHz, 16-bit, mono là 48 KB cho mỗi giây audio, nên một câu 6 giây thành 288 KB và base64 đẩy lên ~384 KB. Ở tần suất chừng mười câu một phút, con số đó không đáng kể.
+
+**Phát bằng `HTMLAudioElement`, không phải `AudioBufferSourceNode`.** `playbackRate` của Web Audio tăng tốc bằng cách đọc sample nhanh hơn, tức đổi luôn cao độ; ở 1.4× giọng nghe như giọng chuột. `HTMLMediaElement.preservesPitch` mặc định bật và cho đúng thứ mục 6.2 vẫn luôn giả định là có: nhanh hơn mà giọng không méo.
+
+**Handler trong service worker chỉ nhận `http://127.0.0.1:*`.** Cùng lý do với `isCaptionUrlAllowed` ở mục 4.5: không để một content script bị chiếm biến service worker thành proxy đi tới host bất kỳ.
+
+### 8.4 Chuyển provider khi server không có ở đó
+
+Mục 10 đòi rơi về Web Speech khi không liên lạc được server, và mục 8 đòi dò lại "mỗi khi có lỗi". Cách rẻ nhất để có cả hai mà không dạy scheduler biết tới hai engine: một `FallbackProvider` tự nó là một `TTSProvider`, bọc hai cái bên trong. Nó thử cái chính, hỏng thì đánh dấu là đang hỏng và chuyển sang cái dự phòng, rồi thử lại cái chính sau 30 giây. Scheduler không biết chuyện đó xảy ra, và toàn bộ logic chuyển đổi nằm trong một đơn vị thuần túy test được không cần trình duyệt.
+
+Một điều phải nói thẳng trong giao diện: M1 đã chứng minh `speechSynthesis` hỏng trên chính máy phát triển này (xem `docs/superpowers/2026-09-20-m1-verification.md`). Nên ở đây "rơi về Web Speech" trên thực tế nhiều khả năng là **không có tiếng gì cả**. Thông báo vì thế phải nói rằng server TTS chưa chạy, chứ không nói "đang dùng giọng dự phòng" rồi để người dùng ngồi chờ một thứ không bao giờ tới.
+
 ## 9. Cache
 
 IndexedDB, do service worker sở hữu.
@@ -339,7 +378,7 @@ Bộ máy đồng bộ là nơi bug sẽ trú ngụ, và gần như toàn bộ n
 
 **M1 — pipeline chạy được.** `player-bridge`, `caption-source` (kèm xác nhận endpoint thật của Udemy), `segmenter`, translator, `WebSpeechProvider`, `scheduler`. Không cần cài đặt gì, nên bộ máy đồng bộ được kiểm chứng riêng trước khi đưa server vào. Hoàn thành khi một bài giảng Udemy thật phát ra tiếng Việt.
 
-**M2 — giọng thật.** `VieNeuProvider`, server cục bộ chạy native, `launchd` agent, `Dockerfile` kèm theo, dò khả dụng và cơ chế dự phòng.
+**M2 — giọng thật.** `VieNeuProvider`, server cục bộ chạy native, `launchd` agent, `Dockerfile` kèm theo, dò khả dụng và cơ chế dự phòng. Kéo theo hai thứ không hiện ra cho tới khi có engine thật: tổng hợp trước con trỏ phát (mục 6.5) và đường audio xuyên process (mục 8.3).
 
 **M3 — dùng được hằng ngày.** Cache IndexedDB, bảng điều khiển, lớp phụ đề tiếng Việt, trang options.
 
