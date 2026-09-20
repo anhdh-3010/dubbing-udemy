@@ -1,4 +1,5 @@
 import { planBatches } from '../core/batching'
+import { FallbackProvider } from '../core/fallback'
 import { Scheduler } from '../core/scheduler'
 import { mergeCues } from '../core/segmenter'
 import type { Cue, Segment } from '../core/types'
@@ -6,6 +7,7 @@ import { parseVtt } from '../core/vtt'
 import { CAPTION_MESSAGE } from '../player/caption-hook'
 import { cuesFromTextTracks, cuesFromTextTracksWhenReady } from '../player/caption-source'
 import { createPlayerBridge, lectureIdFromUrl } from '../player/player-bridge'
+import { VieNeuProvider } from '../providers/vieneu'
 import { WebSpeechProvider } from '../providers/web-speech'
 import type { TranslateResponse } from './background'
 
@@ -23,7 +25,6 @@ export default defineContentScript({
   runAt: 'document_idle',
 
   main() {
-    const provider = new WebSpeechProvider()
     const bridge = createPlayerBridge(document)
 
     let scheduler: Scheduler | null = null
@@ -70,6 +71,20 @@ export default defineContentScript({
       // (NodeJS.Timeout) rather than the DOM's number.
       noticeTimer = window.setTimeout(() => noticeEl && (noticeEl.style.display = 'none'), 6000)
     }
+
+    // Held separately from `provider` because warmUp() is VieNeu's own,
+    // not part of the TTSProvider interface.
+    const vieneu = new VieNeuProvider()
+
+    const provider = new FallbackProvider(vieneu, new WebSpeechProvider(), {
+      onStatusChange: (status) => {
+        showNotice(
+          status === 'fallback'
+            ? 'Server TTS ngừng trả lời. Giọng dự phòng của trình duyệt thường im lặng trên máy này — chạy lại server rồi tải lại trang.'
+            : 'Server TTS đã trở lại.',
+        )
+      },
+    })
 
     window.addEventListener('message', (event) => {
       if (event.source !== window) return
@@ -224,7 +239,17 @@ export default defineContentScript({
         const voiceAvailable = await provider.isAvailable()
         if (gen !== generation) return // don't toast lecture A's voice check over lecture B
         if (!voiceAvailable) {
-          showNotice('Không có giọng đọc tiếng Việt trên trình duyệt này, lồng tiếng có thể không đúng.')
+          // Both engines are out. Saying "the browser fallback will be used"
+          // here would be a lie by omission: on this machine
+          // speechSynthesis.speak() produces nothing at all, so the honest
+          // message names the thing that can actually be fixed.
+          showNotice('Chưa có giọng đọc: server TTS không chạy. Chạy server/install-agent.sh rồi tải lại trang.')
+        } else if (provider.status === 'primary') {
+          // Not awaited. The server needs about 4.3s to load the model and
+          // another ~1.8s for its first inference; the point is to spend
+          // that now, while the first translation batch is in flight,
+          // instead of on the lecture's first sentence.
+          void vieneu.warmUp()
         }
 
         const segs = mergeCues(cues)
