@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { isLoopbackHttpUrl, synthesize, ttsHealth } from './tts'
+import { isLoopbackHttpUrl, synthesize, toBase64, ttsHealth } from './tts'
 
 const BASE = 'http://127.0.0.1:8770'
 
@@ -71,26 +71,12 @@ describe('synthesize', () => {
     })
   })
 
-  it('trả audio base64 và thời lượng chính xác từ header', async () => {
-    // "RIFF" — the four bytes every WAV file starts with.
-    const f = vi.fn(async () => wavResponse(new Uint8Array([82, 73, 70, 70]), 4.25))
+  it('trả byte WAV thô và thời lượng chính xác từ header', async () => {
+    const f = vi.fn(async () => wavResponse(new Uint8Array([82, 73, 70, 70]), 2.5))
     const res = await synthesize('xin chào', f as unknown as typeof fetch, BASE)
 
-    expect(res.duration).toBe(4.25)
-    expect(res.audio).toBe('UklGRg==')
-  })
-
-  it('mã hóa được buffer lớn mà không tràn call stack', async () => {
-    // A 12-second sentence — the segmenter's ceiling — is about 576 KB of
-    // 24 kHz 16-bit mono. String.fromCharCode(...bytes) throws
-    // "Maximum call stack size exceeded" well below that, so the chunking
-    // in toBase64 is load-bearing rather than tidiness.
-    const big = new Uint8Array(600_000).fill(65)
-    const f = vi.fn(async () => wavResponse(big, 12))
-    const res = await synthesize('câu dài', f as unknown as typeof fetch, BASE)
-
-    expect(res.audio.length).toBe(800_000)
-    expect(atob(res.audio).length).toBe(600_000)
+    expect(Array.from(res.wav)).toEqual([82, 73, 70, 70])
+    expect(res.duration).toBe(2.5)
   })
 
   it('ném lỗi kèm status khi server trả lỗi', async () => {
@@ -120,5 +106,18 @@ describe('synthesize', () => {
       synthesize('x', f as unknown as typeof fetch, 'http://evil.example'),
     ).rejects.toThrow('loopback')
     expect(f).not.toHaveBeenCalled()
+  })
+})
+
+describe('toBase64', () => {
+  it('toBase64 chia chunk nên không tràn call stack với audio dài', () => {
+    // String.fromCharCode(...bytes) spreads every byte as an argument and
+    // throws "Maximum call stack size exceeded" at this size, which is why
+    // the chunking in toBase64 is load-bearing rather than tidiness.
+    const big = new Uint8Array(600_000)
+    const encoded = toBase64(big)
+
+    expect(encoded.length).toBe(800_000)
+    expect(atob(encoded).length).toBe(600_000)
   })
 })

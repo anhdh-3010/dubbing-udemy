@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { MODEL_ID, TARGET_LANG } from '../../background/gemini'
-import { translationKey } from '../../core/cache-policy'
+import { TTS_STEPS, TTS_VOICE } from '../../background/tts'
+import { audioKey, translationKey } from '../../core/cache-policy'
 import type { CacheLookupRequest, TranslateRequest, TtsSpeakRequest } from '../background'
 
 // Widened to every request type this file sends. Casting at the call site
@@ -19,12 +20,27 @@ const getTranslations = vi.fn(async (_keys: readonly string[]) => new Map<string
 const putTranslations = vi.fn(async () => {
   calls.push('putTranslations')
 })
+const getAudio = vi.fn(async (_key: string) => null as { wav: ArrayBuffer; duration: number } | null)
+const putAudio = vi.fn(async () => {
+  // Two microtask hops, deliberately: with a fully synchronous body (just
+  // `calls.push(...)`, no `await` inside), the push happens at *call* time,
+  // not at *settle* time — so dropping `await putAudio(...)` in speakCached
+  // does not reorder `calls` at all, and the "written BEFORE the reply"
+  // test below stays green whether or not the write is actually awaited.
+  // Verified in task-6-report.md's Step 7: with a synchronous body, the
+  // order-inversion mutation left this test green. These two hops give the
+  // reply's own single-hop `.then` a chance to run first when the write
+  // isn't awaited, so the mutation is actually caught.
+  await Promise.resolve()
+  await Promise.resolve()
+  calls.push('putAudio')
+})
 
 vi.mock('../../background/cache', () => ({
   getTranslations: (keys: readonly string[]) => getTranslations(keys),
   putTranslations: () => putTranslations(),
-  getAudio: async () => null,
-  putAudio: async () => undefined,
+  getAudio: (key: string) => getAudio(key),
+  putAudio: () => putAudio(),
   isCacheDisabled: () => false,
 }))
 
@@ -70,7 +86,10 @@ beforeEach(async () => {
   calls.length = 0
   getTranslations.mockClear()
   putTranslations.mockClear()
+  getAudio.mockClear()
+  putAudio.mockClear()
   getTranslations.mockResolvedValue(new Map())
+  getAudio.mockResolvedValue(null)
   vi.resetModules()
   stubChrome()
   vi.stubGlobal('fetch', geminiReturning([[1, 'xin chào']]))
@@ -196,5 +215,62 @@ describe('ghi cache khi dịch', () => {
     // inside the mock's own implementation, so only sendResponse is
     // recorded — the reply still goes out despite the cache failure.
     expect(calls).toEqual(['sendResponse'])
+  })
+})
+
+/** A TTS server reply carrying `bytes` as the WAV body. */
+function ttsReturning(bytes: number[], duration: number): typeof fetch {
+  return vi.fn(
+    async () =>
+      new Response(new Uint8Array(bytes) as unknown as BodyInit, {
+        status: 200,
+        headers: { 'X-Audio-Duration': String(duration) },
+      }),
+  ) as unknown as typeof fetch
+}
+
+describe('cache audio', () => {
+  it('trúng cache thì trả về ngay và không gọi server', async () => {
+    const fetchSpy = ttsReturning([1, 2, 3, 4], 9)
+    vi.stubGlobal('fetch', fetchSpy)
+    getAudio.mockResolvedValue({ wav: new Uint8Array([82, 73, 70, 70]).buffer, duration: 2.5 })
+
+    const res = await send({ type: 'tts-speak', text: 'xin chào' })
+
+    expect(res).toEqual({ audio: 'UklGRg==', duration: 2.5 })
+    expect(fetchSpy).not.toHaveBeenCalled()
+  })
+
+  it('tra cache bằng khoá gồm cả giọng và số bước', async () => {
+    vi.stubGlobal('fetch', ttsReturning([82, 73, 70, 70], 1))
+    await send({ type: 'tts-speak', text: 'xin chào' })
+    expect(getAudio).toHaveBeenCalledWith(await audioKey('xin chào', TTS_VOICE, TTS_STEPS))
+  })
+
+  it('trượt cache thì tổng hợp, và ghi cache TRƯỚC khi trả lời', async () => {
+    vi.stubGlobal('fetch', ttsReturning([82, 73, 70, 70], 2.5))
+
+    const res = await send({ type: 'tts-speak', text: 'xin chào' })
+
+    expect(res).toEqual({ audio: 'UklGRg==', duration: 2.5 })
+    expect(calls).toEqual(['putAudio', 'sendResponse'])
+  })
+
+  it('tổng hợp hỏng thì không ghi cache và trả error', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response('boom', { status: 500 })),
+    )
+
+    const res = (await send({ type: 'tts-speak', text: 'xin chào' })) as { error?: string }
+
+    expect(res.error).toContain('500')
+    expect(putAudio).not.toHaveBeenCalled()
+  })
+
+  it('văn bản rỗng thì không tra cache và không gọi mạng', async () => {
+    const res = (await send({ type: 'tts-speak', text: '   ' })) as { error?: string }
+    expect(res.error).toContain('non-empty')
+    expect(getAudio).not.toHaveBeenCalled()
   })
 })

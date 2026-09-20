@@ -36,10 +36,15 @@ const HEALTH_TIMEOUT_MS = 2_000
 const SPEECH_TIMEOUT_MS = 30_000
 
 export interface SynthesisResult {
-  /** WAV bytes, base64. chrome.runtime.sendMessage serialises with JSON, so
-   *  an ArrayBuffer would arrive as `{}` — base64 is a constraint here, not
-   *  a preference (spec 8.3). */
-  audio: string
+  /** Raw WAV bytes. Base64 is applied at the message boundary, not here:
+   *  `chrome.runtime.sendMessage` serialises with JSON so an ArrayBuffer
+   *  would arrive as `{}` (spec 8.3) — but the cache stores these bytes as
+   *  they are, and base64 would cost it a third of its quota.
+   *
+   *  The `<ArrayBuffer>` argument is load-bearing under this repo's
+   *  TypeScript: the default `Uint8Array<ArrayBufferLike>` does not satisfy
+   *  `BlobPart`, and its `.buffer` is not an `ArrayBuffer` (M2, Ruling 9). */
+  wav: Uint8Array<ArrayBuffer>
   /** Seconds, exact, from the server's X-Audio-Duration header. */
   duration: number
 }
@@ -55,7 +60,7 @@ export function isLoopbackHttpUrl(raw: string): boolean {
   }
 }
 
-function toBase64(bytes: Uint8Array): string {
+export function toBase64(bytes: Uint8Array): string {
   // btoa wants a binary string. String.fromCharCode(...bytes) spreads every
   // byte as an argument and throws "Maximum call stack size exceeded" on
   // anything this size, so the buffer is walked in chunks.
@@ -107,6 +112,6 @@ export async function synthesize(
     throw new Error('TTS response is missing X-Audio-Duration')
   }
 
-  const bytes = new Uint8Array(await res.arrayBuffer())
-  return { audio: toBase64(bytes), duration }
+  const wav = new Uint8Array(await res.arrayBuffer()) as Uint8Array<ArrayBuffer>
+  return { wav, duration }
 }

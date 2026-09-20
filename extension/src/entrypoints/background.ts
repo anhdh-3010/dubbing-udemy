@@ -1,8 +1,8 @@
 import { InvalidApiKeyError, MODEL_ID, PermanentApiError, TARGET_LANG, translateBatch } from '../background/gemini'
-import { getTranslations, putTranslations, type TranslationInput } from '../background/cache'
-import { synthesize, ttsHealth } from '../background/tts'
+import { getAudio, getTranslations, putAudio, putTranslations, type TranslationInput } from '../background/cache'
+import { TTS_STEPS, TTS_VOICE, synthesize, toBase64, ttsHealth } from '../background/tts'
 import { isCaptionUrlAllowed } from '../player/caption-hook'
-import { translationKey } from '../core/cache-policy'
+import { audioKey, translationKey } from '../core/cache-policy'
 import type { Segment } from '../core/types'
 
 export interface TranslateRequest {
@@ -115,6 +115,29 @@ async function cacheTranslations(
   await putTranslations(rows)
 }
 
+/** One sentence of speech, from the cache when it is there and from the
+ *  server when it is not.
+ *
+ *  Re-synthesising is cheap — about 0.6s for a seven-second sentence on this
+ *  machine — and the scheduler prefetches one sentence ahead, so watching
+ *  straight through barely notices the difference. What this buys is the
+ *  other case: scrubbing back to hear a line again, and rewatching a lecture
+ *  the next day. */
+async function speakCached(text: string): Promise<TtsSpeakResponse> {
+  const key = await audioKey(text, TTS_VOICE, TTS_STEPS)
+
+  const hit = await getAudio(key)
+  if (hit !== null) {
+    return { audio: toBase64(new Uint8Array(hit.wav)), duration: hit.duration }
+  }
+
+  const { wav, duration } = await synthesize(text)
+  // Before the reply, for the same reason translations are: MV3 can
+  // terminate this worker the moment sendResponse returns.
+  await putAudio(key, wav.buffer, duration)
+  return { audio: toBase64(wav), duration }
+}
+
 export default defineBackground(() => {
   chrome.runtime.onMessage.addListener((msg: Request, _sender, sendResponse) => {
     if (msg.type === 'cache-lookup') {
@@ -224,7 +247,7 @@ export default defineBackground(() => {
         sendResponse({ error: 'tts-speak requires non-empty text' })
         return true
       }
-      synthesize(msg.text)
+      speakCached(msg.text)
         .then((r) => sendResponse(r))
         .catch((e) => sendResponse({ error: e instanceof Error ? e.message : String(e) }))
       return true
