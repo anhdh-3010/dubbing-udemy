@@ -70,16 +70,16 @@ describe('background: fetch-caption security gate', () => {
   })
 
   it('URL phụ đề hợp lệ thì gọi fetch kèm credentials và redirect error', async () => {
-    await sendFetchCaption('https://x.udemycdn.com/c/en.vtt')
+    await sendFetchCaption('https://x.udemycdn.com/25721448/en_GB/en.vtt')
     expect(fetchMock).toHaveBeenCalledWith(
-      'https://x.udemycdn.com/c/en.vtt',
+      'https://x.udemycdn.com/25721448/en_GB/en.vtt',
       expect.objectContaining({ credentials: 'include', redirect: 'error' }),
     )
   })
 
   it('phản hồi HTTP lỗi (vd 403 do link ký hết hạn) thì báo lỗi kèm mã trạng thái, không trả text', async () => {
     fetchMock.mockResolvedValueOnce(new Response('<html>Forbidden</html>', { status: 403 }))
-    const res = await sendFetchCaption('https://x.udemycdn.com/c/en.vtt')
+    const res = await sendFetchCaption('https://x.udemycdn.com/25721448/en_GB/en.vtt')
     expect(res).toMatchObject({ error: expect.stringContaining('403') })
     expect(res).not.toHaveProperty('text')
   })

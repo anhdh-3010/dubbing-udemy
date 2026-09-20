@@ -38,6 +38,16 @@ export function installCaptionHook(win: WindowLike, onUrl: (url: string) => void
 const CAPTION_HOSTS = /(^|\.)udemy\.com$|(^|\.)udemycdn\.com$/i
 
 /**
+ * Udemy's caption CDN path always carries a locale segment immediately
+ * before the filename (e.g. `/25721448/en_GB/....vtt`). The scrubber's
+ * hover-preview thumbnail track is also a `.vtt` file on an allowed host,
+ * but its path has no locale segment (e.g. `/<asset>/1/thumb-sprites.vtt`).
+ * Requiring the locale segment excludes that sprite track without touching
+ * the host allowlist.
+ */
+const LOCALE_VTT_PATH = /\/([a-z]{2}(?:_[A-Z]{2})?)\/[^/]+\.vtt$/
+
+/**
  * The service worker fetches reported URLs with the user's cookies, so a
  * forged report must not become a credentialed request to an arbitrary host
  * — or to an arbitrary path on an allowed host. Both the reporter and the
@@ -46,7 +56,12 @@ const CAPTION_HOSTS = /(^|\.)udemy\.com$|(^|\.)udemycdn\.com$/i
 export function isCaptionUrlAllowed(raw: string): boolean {
   try {
     const url = new URL(raw)
-    return url.protocol === 'https:' && CAPTION_HOSTS.test(url.hostname) && VTT_URL.test(url.pathname)
+    return (
+      url.protocol === 'https:' &&
+      CAPTION_HOSTS.test(url.hostname) &&
+      VTT_URL.test(url.pathname) &&
+      LOCALE_VTT_PATH.test(url.pathname)
+    )
   } catch {
     return false
   }

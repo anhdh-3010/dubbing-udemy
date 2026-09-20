@@ -55,8 +55,8 @@ describe('installCaptionHook', () => {
 
 describe('isCaptionUrlAllowed', () => {
   it('nhận URL phụ đề của Udemy và CDN của nó', () => {
-    expect(isCaptionUrlAllowed('https://x.udemycdn.com/c/en.vtt')).toBe(true)
-    expect(isCaptionUrlAllowed('https://www.udemy.com/c/en.vtt')).toBe(true)
+    expect(isCaptionUrlAllowed('https://x.udemycdn.com/25721448/en_GB/en.vtt')).toBe(true)
+    expect(isCaptionUrlAllowed('https://www.udemy.com/25721448/en_GB/en.vtt')).toBe(true)
   })
 
   it('từ chối host lạ, kể cả khi tên miền chỉ là hậu tố', () => {
@@ -81,6 +81,30 @@ describe('isCaptionUrlAllowed', () => {
   })
 
   it('vẫn nhận URL phụ đề thật có query string', () => {
-    expect(isCaptionUrlAllowed('https://x.udemycdn.com/c/en.vtt?token=abc')).toBe(true)
+    expect(isCaptionUrlAllowed('https://x.udemycdn.com/25721448/en_GB/en.vtt?token=abc')).toBe(true)
+  })
+
+  it('nhận cả 8 URL phụ đề thật lấy từ API của Udemy', () => {
+    const realCaptionUrls = [
+      'https://vtt-c.udemycdn.com/25721448/ja_JP/2023-03-30_05-08-46-1b68e787.vtt?Expires=1789894930&Signature=X',
+      'https://vtt-c.udemycdn.com/25721448/es_ES/2024-06-25_11-19-39-4b289f26.vtt?Expires=1789894930&Signature=X',
+      'https://vtt-c.udemycdn.com/25721448/en_GB/2020-07-03_20-18-24-dc5c1fda.vtt?Expires=1789894930&Signature=X',
+      'https://vtt-c.udemycdn.com/25721448/tr_TR/2024-11-20_16-49-21-387cce80.vtt?Expires=1789894930&Signature=X',
+      'https://vtt-c.udemycdn.com/25721448/zh_CN/2023-10-28_18-37-57-1949ff2d.vtt?Expires=1789894930&Signature=X',
+      'https://vtt-c.udemycdn.com/25721448/de_DE/2024-09-18_11-31-30-4f3770e1.vtt?Expires=1789894930&Signature=X',
+      'https://vtt-c.udemycdn.com/25721448/pt_BR/2024-02-23_09-52-47-f01da34c.vtt?Expires=1789894930&Signature=X',
+      'https://vtt-c.udemycdn.com/25721448/it_IT/2024-09-26_10-50-23-8faac56e.vtt?Expires=1789894930&Signature=X',
+    ]
+    for (const url of realCaptionUrls) {
+      expect(isCaptionUrlAllowed(url)).toBe(true)
+    }
+  })
+
+  it('từ chối track ảnh thu nhỏ của thanh tua (thumb-sprites.vtt) vì không có đoạn locale trước tên file', () => {
+    expect(
+      isCaptionUrlAllowed(
+        'https://mp4-c.udemycdn.com/2020-06-23_23-14-30-5bf09f75/1/thumb-sprites.vtt?Expires=1789896405&Signature=X',
+      ),
+    ).toBe(false)
   })
 })
