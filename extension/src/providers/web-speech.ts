@@ -87,6 +87,7 @@ export class WebSpeechProvider implements TTSProvider {
     let native: SpeechSynthesisUtterance | null = null
     let startedAt = 0
     let cancelled = false
+    let watchdog: ReturnType<typeof setTimeout> | undefined
 
     return {
       duration,
@@ -118,7 +119,7 @@ export class WebSpeechProvider implements TTSProvider {
           // Resolving (not rejecting) matches that reasoning: the slot is
           // over either way, and the scheduler's cleanup must run on both
           // paths.
-          const watchdog = setTimeout(
+          watchdog = setTimeout(
             () => {
               // The reading never really completed — cut off mid-flight, or
               // never started at all — so, like the `cancelled` branch
@@ -169,6 +170,7 @@ export class WebSpeechProvider implements TTSProvider {
 
       cancel(): void {
         cancelled = true
+        clearTimeout(watchdog)
         if (native !== null) speechSynthesis.cancel()
       },
     }
