@@ -1,9 +1,10 @@
 # Pinned exactly, not floated: this file exists so the launchd agent keeps
 # working after an unrelated `uv pip install` elsewhere on the machine.
-# vieneu pulls onnxruntime, numpy, sea-g2p and much of the rest; the three
+# vieneu pulls onnxruntime, numpy, sea-g2p and much of the rest; the four
 # below are pinned anyway because app.py imports them directly, and a
 # transitive pin is not a promise.
 vieneu==3.8.1
 fastapi==0.141.1
 uvicorn==0.53.0
 numpy==2.5.3
+pydantic==2.13.5
