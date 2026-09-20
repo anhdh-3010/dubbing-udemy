@@ -14,12 +14,16 @@ class FakeSpeechSynthesisUtterance {
   }
 }
 
-function installFakeSpeech() {
+function installFakeSpeech(
+  voices: { lang: string; name: string; default?: boolean }[] = [
+    { lang: 'vi-VN', name: 'Linh', default: true },
+  ],
+) {
   const spoken: FakeSpeechSynthesisUtterance[] = []
   const synth = {
     speak: vi.fn((u: FakeSpeechSynthesisUtterance) => spoken.push(u)),
     cancel: vi.fn(),
-    getVoices: () => [{ lang: 'vi-VN', name: 'Linh', default: true }],
+    getVoices: () => voices,
   }
   vi.stubGlobal('speechSynthesis', synth)
   vi.stubGlobal('SpeechSynthesisUtterance', FakeSpeechSynthesisUtterance)
@@ -217,5 +221,27 @@ describe('WebSpeechProvider', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('ưu tiên giọng nâng cao khi macOS phơi ra cả hai', async () => {
+    // Observed on this machine during the M1 verification run: getVoices()
+    // returns both "Linh" and "Linh (Nâng cao)". find() took the first,
+    // which is the worse one.
+    const { spoken } = installFakeSpeech([
+      { lang: 'vi-VN', name: 'Linh', default: true },
+      { lang: 'vi-VN', name: 'Linh (Nâng cao)' },
+    ])
+    const u = await new WebSpeechProvider().prepare('xin chào', new AbortController().signal)
+    void u.play(1)
+
+    expect((spoken[0].voice as { name: string }).name).toBe('Linh (Nâng cao)')
+  })
+
+  it('dùng giọng thường khi chỉ có nó', async () => {
+    const { spoken } = installFakeSpeech([{ lang: 'vi-VN', name: 'Linh', default: true }])
+    const u = await new WebSpeechProvider().prepare('xin chào', new AbortController().signal)
+    void u.play(1)
+
+    expect((spoken[0].voice as { name: string }).name).toBe('Linh')
   })
 })
