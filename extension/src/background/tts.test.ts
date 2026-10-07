@@ -66,7 +66,7 @@ describe('synthesize', () => {
     expect(init.method).toBe('POST')
     expect(JSON.parse(String(init.body))).toEqual({
       input: 'xin chào',
-      voice: 'Minh Quân',
+      voice: 'Hải Đăng',
       steps: 8,
     })
   })

@@ -22,13 +22,8 @@
         <string>127.0.0.1</string>
         <key>PORT</key>
         <string>8770</string>
-        <!-- Two threads beat the default by ~18% on this workload. -->
-        <key>OMP_NUM_THREADS</key>
-        <string>2</string>
         <key>VIENEU_VOICE</key>
-        <string>Minh Quân</string>
-        <key>VIENEU_STEPS</key>
-        <string>8</string>
+        <string>Hải Đăng</string>
     </dict>
 
     <key>RunAtLoad</key>

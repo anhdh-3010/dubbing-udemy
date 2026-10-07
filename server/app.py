@@ -1,10 +1,10 @@
 """OpenAI-compatible TTS server for the Udemy dubbing extension.
 
-The `apps.openai_speech` server bundled with `vieneu` hardcodes mode
-"v3turbo" (see its line 100), which is roughly six times slower on CPU
-than the v3 Nano model this project settled on. This wrapper serves
-Nano instead, and keeps the same request shape so a single TTSProvider
-implementation can talk to either this or OpenAI's hosted API.
+Serves VieNeu v3 Turbo, for its "Hải Đăng" voice and 48 kHz output.
+v3 Nano was about 2.6x faster on CPU (RTF 0.105 against Turbo's ~0.22 on
+an M2 Pro) but has no such voice. The request shape matches OpenAI's, so a
+single TTSProvider implementation can talk to either this or OpenAI's
+hosted API.
 """
 
 import io
@@ -18,15 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-# Must be set before onnxruntime is imported, which happens lazily inside
-# _engine(). Two threads beat the default by about 18% on this workload —
-# it loses to thread contention rather than gaining from more cores (spec
-# 8.1). setdefault, not assignment: an explicit value from the environment
-# or the launchd plist still wins.
-os.environ.setdefault("OMP_NUM_THREADS", "2")
-
-VOICE = os.environ.get("VIENEU_VOICE", "Minh Quân")
-STEPS = int(os.environ.get("VIENEU_STEPS", "8"))
+VOICE = os.environ.get("VIENEU_VOICE", "Hải Đăng")
 PORT = int(os.environ.get("PORT", "8770"))
 
 app = FastAPI(title="Udemy Dubbing TTS", version="1.0")
@@ -47,18 +39,23 @@ _tts = None
 def _engine():
     """Load the model on first use, not at startup.
 
-    Keeps idle memory low; the ~5s cold load overlaps the first
+    Keeps idle memory low; the ~6s cold load overlaps the first
     translation batch, so it is not felt at the start of a lecture.
+
+    Threads are left at the engine's default (half the cores, capped at
+    8). Unlike Nano, Turbo sets its own ONNX Runtime thread count, so
+    OMP_NUM_THREADS does not reach it; on an M2 Pro, 6 threads ran at RTF
+    0.22 against 0.31 for 2.
     """
     global _tts
     if _tts is None:
         from vieneu import Vieneu
 
-        _tts = Vieneu(mode="v3nano")
+        _tts = Vieneu(mode="v3turbo")
     return _tts
 
 
-def _to_wav(audio, sample_rate: int = 24000) -> tuple[bytes, float]:
+def _to_wav(audio, sample_rate: int) -> tuple[bytes, float]:
     samples = np.asarray(audio, dtype=np.float32).squeeze()
     peak = float(np.abs(samples).max()) or 1.0
     pcm = (samples / peak * 0.95 * 32767).astype(np.int16)
@@ -75,7 +72,7 @@ def _to_wav(audio, sample_rate: int = 24000) -> tuple[bytes, float]:
 class SpeechRequest(BaseModel):
     input: str
     voice: str | None = None
-    steps: int | None = None
+    steps: int | None = None            # accepted and ignored: a Nano setting Turbo has no use for
     model: str | None = None            # accepted and ignored, for API compatibility
     response_format: str | None = None  # only "wav" is produced
 
@@ -88,16 +85,13 @@ def speech(req: SpeechRequest) -> Response:
 
     started = time.time()
     try:
-        audio = _engine().infer(
-            text,
-            voice=req.voice or VOICE,
-            steps=req.steps or STEPS,
-        )
+        engine = _engine()
+        audio = engine.infer(text, voice=req.voice or VOICE)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"synthesis failed: {exc}") from exc
     elapsed = time.time() - started
 
-    data, duration = _to_wav(audio)
+    data, duration = _to_wav(audio, engine.sample_rate)
     return Response(
         content=data,
         media_type="audio/wav",
@@ -112,7 +106,7 @@ def speech(req: SpeechRequest) -> Response:
 
 @app.get("/health")
 def health() -> dict:
-    return {"status": "ok", "model_loaded": _tts is not None, "voice": VOICE, "steps": STEPS}
+    return {"status": "ok", "model_loaded": _tts is not None, "model": "v3turbo", "voice": VOICE}
 
 
 if __name__ == "__main__":

@@ -25,13 +25,15 @@
 export const TTS_BASE_URL =
   import.meta.env.MODE === 'e2e' ? 'http://127.0.0.1:5599' : 'http://127.0.0.1:8770'
 
-export const TTS_VOICE = 'Minh Quân'
-/** 8 beats 16: it sounds better and costs half the CPU (spec appendix A). */
+export const TTS_VOICE = 'Hải Đăng'
+/** Ignored by the Turbo server, which has no steps setting. Still sent and
+ *  still part of the audio cache key (cache-policy.ts), so changing it would
+ *  only throw away cached audio for nothing. */
 export const TTS_STEPS = 8
 
 const HEALTH_TIMEOUT_MS = 2_000
-/** A 12-second sentence takes about 1.5s to synthesise once the model is
- *  warm, and about 6s on the very first call after the server starts. 30s is
+/** A 12-second sentence takes about 2.7s to synthesise once the model is
+ *  warm, and about 9s on the very first call after the server starts. 30s is
  *  not a performance budget — it is the line past which something is wrong. */
 const SPEECH_TIMEOUT_MS = 30_000
 

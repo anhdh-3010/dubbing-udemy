@@ -13,10 +13,9 @@ services:
       - "127.0.0.1:8770:8770"
 
     environment:
-      VIENEU_VOICE: "Minh Quân"
-      VIENEU_STEPS: "8"
+      VIENEU_VOICE: "Hải Đăng"
 
     volumes:
       # Reuse the model already cached on the host rather than baking
-      # another 269MB into the image.
+      # another ~1GB into the image.
       - ${HOME}/.cache/huggingface:/models
